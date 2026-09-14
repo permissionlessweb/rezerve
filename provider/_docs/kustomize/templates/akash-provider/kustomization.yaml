@@ -1,0 +1,56 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: akash-services
+resources:
+  - ../../../../../_docs/kustomize/akash-provider
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: provider-client-config
+    behavior: merge
+    literals:
+      - AKASH_NODE=http://akash-node:26657
+      - AKASH_CHAIN_ID=local
+
+  ##
+  # Akash provider service option overrides
+  ##
+  - name: provider-config
+    behavior: merge
+    literals:
+      - AP_INGRESS_DOMAIN=app.localhost
+      - AP_CLUSTER_PUBLIC_HOSTNAME=app.localhost
+      - AP_CLUSTER_NODE_PORT_QUANTITY=100
+      - AP_BID_PRICE_STRATEGY=randomRange
+      - AP_DEPLOYMENT_RUNTIME_CLASS=none
+#      - AP_INGRESS_STATIC_HOSTS=true
+
+patches:
+
+  ##
+  #  Configure gateway host in `gateway-host.yaml`.  Its value
+  #  should be the hostname from the on-chain Provider.HostURI
+  #  field.
+  ##
+
+  - path: gateway-host.yaml
+    target:
+      group: networking.k8s.io
+      version: v1
+      kind: Ingress
+      name: akash-provider
+  - path: docker-image.yaml
+    target:
+      kind: Deployment
+      group: apps
+      name: provider-service
+      version: v1
+
+secretGenerator:
+  - name: provider-keys
+    behavior: replace
+    files:
+      - cache/key.txt
+      - cache/key-pass.txt
+      - cache/provider-cert.pem

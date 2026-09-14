@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 340" role="img" aria-labelledby="t d">
+  <title id="t">Public Akash and the Terp additional market</title>
+  <desc id="d">Top row is public Akash, left to right. Bottom row is the Terp additional market: same public order, sealed bid, commitment match, then bearer and shielded close. One custom provider-services process.</desc>
+  <rect width="960" height="340" fill="#f8fafc"/>
+  <text x="24" y="28" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" font-weight="700" letter-spacing="0.12em" fill="#2563eb">PUBLIC AKASH</text>
+  <g font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" font-weight="600" text-anchor="middle">
+    <rect x="24" y="44" width="200" height="56" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="124" y="78" fill="#0f172a">Deployment / order</text>
+    <polygon points="232,64 248,72 232,80" fill="#2563eb"/>
+    <rect x="256" y="44" width="200" height="56" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="356" y="78" fill="#0f172a">Public bid + JWT</text>
+    <polygon points="464,64 480,72 464,80" fill="#2563eb"/>
+    <rect x="488" y="44" width="200" height="56" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="588" y="78" fill="#0f172a">AKT / USDC escrow</text>
+    <polygon points="696,64 712,72 696,80" fill="#2563eb"/>
+    <rect x="720" y="44" width="216" height="56" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="828" y="78" fill="#0f172a">Cluster operators</text>
+  </g>
+  <rect x="24" y="118" width="912" height="36" rx="8" fill="#e2e8f0"/>
+  <text x="480" y="142" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" font-weight="700" fill="#0f172a">custom provider-services · public path default · PIR on = Terp additional market</text>
+  <text x="24" y="180" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" font-weight="700" letter-spacing="0.12em" fill="#059669">ADDITIONAL MARKET ON TERP</text>
+  <g font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" font-weight="600" text-anchor="middle">
+    <rect x="24" y="196" width="200" height="72" rx="8" fill="#d1fae5" stroke="#059669"/>
+    <text x="124" y="226" fill="#0f172a">Same order</text>
+    <text x="124" y="246" fill="#334155" font-size="11" font-weight="500">SDL still public</text>
+    <polygon points="232,224 248,232 232,240" fill="#059669"/>
+    <rect x="256" y="196" width="200" height="72" rx="8" fill="#d1fae5" stroke="#059669"/>
+    <text x="356" y="226" fill="#0f172a">Sealed bid</text>
+    <text x="356" y="246" fill="#334155" font-size="11" font-weight="500">price off the book</text>
+    <polygon points="464,224 480,232 464,240" fill="#059669"/>
+    <rect x="488" y="196" width="200" height="72" rx="8" fill="#d1fae5" stroke="#059669"/>
+    <text x="588" y="226" fill="#0f172a">Commitment + Match</text>
+    <text x="588" y="246" fill="#334155" font-size="11" font-weight="500">then allocate</text>
+    <polygon points="696,224 712,232 696,240" fill="#059669"/>
+    <rect x="720" y="196" width="216" height="72" rx="8" fill="#d1fae5" stroke="#059669"/>
+    <text x="828" y="226" fill="#0f172a">Bearer · shielded close</text>
+    <text x="828" y="246" fill="#334155" font-size="11" font-weight="500">FROST group spends</text>
+  </g>
+  <line x1="124" y1="100" x2="124" y2="196" stroke="#059669" stroke-width="2" stroke-dasharray="4 4"/>
+  <text x="136" y="160" font-family="ui-sans-serif,system-ui,sans-serif" font-size="11" fill="#059669">shared order</text>
+</svg>

@@ -1,0 +1,31 @@
+re-zerve PRODUCT_REAL implementation pulse. North-star OBSERVE loop is cancelled.
+
+Read:
+- crates/private-inference-rent/docs/PRODUCT_REAL.md
+- crates/private-inference-rent/docs/BUILD.md
+- crates/private-inference-rent/docs/CW_ORCH_SUITE.md
+- crates/private-inference-rent/docs/ZAP1_IBCV2_LC.md
+
+Use tools. Do not invent. **No dummy rails.** **Never cargo/rustc/npm on the laptop** — ssh "$REZERVE_LAB_HOST" only.
+
+Gaps to implement **in parallel** (disjoint files; do not wait):
+1. DKG exclusive custody (frost_dkg + EscrowHolders; no dealer on product path).
+2. Zcash notes FROST/DKG-owned (not wallet z_sendmany theater; PIR_ZAKURA_LAB=1 fail-closed).
+3. Private accrual from Zakura heights (commitment public; no std::time).
+4. Halo2 HOSTING_PAYMENT / ZAP1 Merkle (not toy mul). CosmWasm proof_instance_verify; missing host fail-closed.
+5. Resolver grant + LC-class Close attest (no VE). NS9 wasm store is lab-only.
+6. **ict-rs e2e gate:** live-ict `daemon_builder_from_chain` + `PrivateInference::deploy_on` + fail-closed if chain/Docker missing. One arbiter: deploy_on + fund_with_zap1 + two spends + bearer deny.
+
+This pulse: launch `/workflow rezerve-product-real {"mode":"craft"}` if you are the scheduler agent — implement at least one remaining gap in-tree if the workflow is not available, still in parallel-safe exclusive files.
+
+Affirm on the lab host:
+```
+ssh "$REZERVE_LAB_HOST" 'export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+  cd ~/abstract/terp-core/crates/private-inference-rent
+  cargo test --features live-ict,e2e,cw-orch-suite --test e2e_local --test zap1_ibcv2 -- --nocapture'
+```
+Fail-closed is honest. Skip-green is not.
+
+product_real=true only if files you read satisfy PRODUCT_REAL.md AND ict-rs gate is fail-closed (not mocked Ok).
+
+Do not restart cancelled NS observe. Do not mark KANBAN done without Pass tests you ran on the lab host.

@@ -1,0 +1,36 @@
+# Build artifacts
+**/target/
+**/node_modules/
+book-out/
+www/
+**/.DS_Store
+**/*.rlib
+**/*.o
+.tmp-ict-e2e.log
+
+# Provider binaries
+provider/provider-services
+provider/dist/
+provider/vendor/
+provider/.cache/
+provider/**/*.test
+coverage.txt
+
+# Local agent / workflow state (lab host paths)
+.grok/
+
+# Docs live only in aep/. Do not track a second tree.
+crate/product-docs/
+crate/book/
+crate/docs/
+crate/book.toml
+crate/KANBAN.md
+crate/MONOREPO.md
+presentation/
+prompts/
+
+# Editor
+.idea/
+.vscode/
+*.iml
+*.code-workspace

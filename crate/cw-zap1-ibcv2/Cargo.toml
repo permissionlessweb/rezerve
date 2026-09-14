@@ -1,0 +1,26 @@
+[package]
+name = "cw-zap1-ibcv2"
+version = "0.1.0"
+edition = "2021"
+description = "ZAP1 + IBC v2 packet attestation CosmWasm module (not Crosslink 08-wasm, not all 9 ICS-08 entrypoints)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+overflow-checks = true
+
+[dependencies]
+cosmwasm-std = "1.5"
+cw-storage-plus = "1.2"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+zap1-verify = "0.2.1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cw-orch = "0.24"
+hosting-payment = { path = "../circuits/hosting-payment" }

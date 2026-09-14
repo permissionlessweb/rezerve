@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 220" role="img" aria-labelledby="t d">
+  <title id="t">Public Akash marketplace</title>
+  <desc id="d">Left to right: deployer writes SDL, deployment opens an order, providers bid, a lease is created, the provider cluster runs the workload.</desc>
+  <rect width="960" height="220" fill="#f8fafc"/>
+  <text x="24" y="32" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" font-weight="700" letter-spacing="0.12em" fill="#2563eb">PUBLIC AKASH</text>
+  <g font-family="ui-sans-serif,system-ui,sans-serif" font-size="14" font-weight="600" text-anchor="middle">
+    <rect x="24" y="70" width="130" height="72" rx="10" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="89" y="102" fill="#0f172a">Deployer</text>
+    <text x="89" y="122" fill="#334155" font-size="11" font-weight="500">writes SDL</text>
+    <polygon points="162,96 178,106 162,116" fill="#2563eb"/>
+    <rect x="186" y="70" width="150" height="72" rx="10" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="261" y="102" fill="#0f172a">Deployment</text>
+    <text x="261" y="122" fill="#334155" font-size="11" font-weight="500">opens an order</text>
+    <polygon points="344,96 360,106 344,116" fill="#2563eb"/>
+    <rect x="368" y="70" width="140" height="72" rx="10" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="438" y="102" fill="#0f172a">Bid</text>
+    <text x="438" y="122" fill="#334155" font-size="11" font-weight="500">price on the book</text>
+    <polygon points="516,96 532,106 516,116" fill="#2563eb"/>
+    <rect x="540" y="70" width="150" height="72" rx="10" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="615" y="102" fill="#0f172a">Lease</text>
+    <text x="615" y="122" fill="#334155" font-size="11" font-weight="500">ES256K JWT</text>
+    <polygon points="698,96 714,106 698,116" fill="#2563eb"/>
+    <rect x="722" y="70" width="214" height="72" rx="10" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="829" y="102" fill="#0f172a">Provider cluster</text>
+    <text x="829" y="122" fill="#334155" font-size="11" font-weight="500">hostname · inventory</text>
+  </g>
+  <text x="24" y="190" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" fill="#475569">Flow is left to right: SDL → order → bid → lease → cluster.</text>
+</svg>

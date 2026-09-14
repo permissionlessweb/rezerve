@@ -1,0 +1,152 @@
+package hostname
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
+	"github.com/akash-network/provider/cluster/kube/builder"
+	providerflags "github.com/akash-network/provider/cmd/provider-services/cmd/flags"
+	"github.com/akash-network/provider/operator/common"
+	"github.com/akash-network/provider/tools/fromctx"
+)
+
+func Cmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:          "hostname",
+		Short:        "kubernetes operator interfacing with k8s nginx ingress",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			group := fromctx.MustErrGroupFromCtx(ctx)
+
+			ns := viper.GetString(providerflags.FlagK8sManifestNS)
+
+			config := common.GetOperatorConfigFromViper()
+
+			logger := common.OpenLogger().With("op", "hostname")
+
+			ctx, err := withGatewayApi(ctx)
+			if err != nil {
+				return err
+			}
+
+			gwCfg := fromctx.MustGatewayConfigFromCtx(ctx)
+			logger.Info("hostname operator configuration",
+				"ingress-mode", gwCfg.IngressMode,
+				"gateway-name", gwCfg.Name,
+				"gateway-namespace", gwCfg.Namespace,
+				"gateway-provider", gwCfg.Provider)
+
+			restPort, err := common.DetectPort(ctx, cmd.Flags(), common.FlagRESTPort, "operator-hostname", "rest")
+			if err != nil {
+				return err
+			}
+
+			listenAddress := viper.GetString(common.FlagRESTAddress)
+			restAddr := fmt.Sprintf("%s:%d", listenAddress, restPort)
+
+			op, err := newHostnameOperator(ctx, logger, ns, config, common.IgnoreListConfigFromViper())
+			if err != nil {
+				return err
+			}
+
+			router := op.server.GetRouter()
+
+			// fixme ovrclk/engineering#609
+			// nolint: gosec
+			srv := http.Server{Addr: restAddr, Handler: router}
+
+			group.Go(func() error {
+				logger.Info("HTTP listening", "address", restAddr)
+				return srv.ListenAndServe()
+			})
+
+			group.Go(func() error {
+				<-ctx.Done()
+
+				_ = srv.Close()
+
+				return ctx.Err()
+			})
+
+			group.Go(op.run)
+
+			fromctx.MustStartupChFromCtx(ctx) <- struct{}{}
+
+			err = group.Wait()
+
+			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+
+			return nil
+		},
+	}
+
+	common.AddOperatorFlags(cmd)
+	common.AddIgnoreListFlags(cmd)
+
+	addGatewayApiFlags(cmd)
+
+	return cmd
+}
+
+func addGatewayApiFlags(cmd *cobra.Command) {
+	cmd.Flags().String("ingress-mode", "ingress", "Ingress mode: 'ingress' for NGINX Ingress (default) or 'gateway-api' for Gateway API")
+	if err := viper.BindPFlag("ingress-mode", cmd.Flags().Lookup("ingress-mode")); err != nil {
+		panic(err)
+	}
+
+	cmd.Flags().String("gateway-name", "akash-gateway", "Gateway name when using gateway-api mode")
+	if err := viper.BindPFlag("gateway-name", cmd.Flags().Lookup("gateway-name")); err != nil {
+		panic(err)
+	}
+
+	cmd.Flags().String("gateway-namespace", "akash-gateway", "Gateway namespace when using gateway-api mode")
+	if err := viper.BindPFlag("gateway-namespace", cmd.Flags().Lookup("gateway-namespace")); err != nil {
+		panic(err)
+	}
+
+	cmd.Flags().String("gateway-provider", "nginx", "Gateway provider: 'nginx' for NGINX Gateway Fabric (default)")
+	if err := viper.BindPFlag("gateway-provider", cmd.Flags().Lookup("gateway-provider")); err != nil {
+		panic(err)
+	}
+
+	cmd.Flags().String(providerflags.FlagProxyBufferSize, "16k", "NGINX proxy buffer size for upstream response headers")
+	if err := viper.BindPFlag(providerflags.FlagProxyBufferSize, cmd.Flags().Lookup(providerflags.FlagProxyBufferSize)); err != nil {
+		panic(err)
+	}
+}
+
+func withGatewayApi(ctx context.Context) (context.Context, error) {
+	ingressMode, err := builder.ParseIngressMode(viper.GetString("ingress-mode"))
+	if err != nil {
+		return nil, err
+	}
+	gatewayName := viper.GetString("gateway-name")
+	gatewayNamespace := viper.GetString("gateway-namespace")
+	gatewayProvider := viper.GetString("gateway-provider")
+
+	if ingressMode == builder.IngressModeGateway {
+		if gatewayName == "" {
+			return nil, fmt.Errorf("gateway-name is required when ingress-mode is %s", builder.IngressModeGateway)
+		}
+		if gatewayNamespace == "" {
+			return nil, fmt.Errorf("gateway-namespace is required when ingress-mode is %s", builder.IngressModeGateway)
+		}
+	}
+
+	ctx = context.WithValue(ctx, fromctx.CtxKeyGatewayConfig, fromctx.GatewayConfig{
+		IngressMode: string(ingressMode),
+		Name:        gatewayName,
+		Namespace:   gatewayNamespace,
+		Provider:    gatewayProvider,
+	})
+
+	return ctx, nil
+}

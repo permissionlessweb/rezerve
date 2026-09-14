@@ -1,0 +1,29 @@
+[package]
+name = "hosting-payment"
+version = "0.1.0"
+edition = "2021"
+description = "Halo2 HOSTING_PAYMENT inclusion: ZAP1 BLAKE2b-256 Merkle (siblings private; 128-byte instances)"
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "export-halo2"
+path = "src/bin/export-halo2.rs"
+required-features = ["store-full-circuit"]
+
+[features]
+default = []
+# Path A store-full-circuit needs CS.write + 80-byte CircuitFooter (crates.io 0.3 lacks CS write).
+store-full-circuit = []
+
+[dependencies]
+ff = "0.13"
+group = "0.13"
+halo2_proofs = { path = "../../../zcash/halo2/halo2_proofs" }
+pasta_curves = "0.5"
+rand = "0.8"
+getrandom = "0.2"
+sha2 = "0.10"
+hex = "0.4"
+zap1-verify = "0.2.1"

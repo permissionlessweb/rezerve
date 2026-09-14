@@ -1,0 +1,22 @@
+re-zerve PRODUCTION LOOP. Lab pieces exist. Do not add more in-process theater.
+
+Read:
+- crates/private-inference-rent/docs/PRODUCT_REAL.md
+- crates/private-inference-rent/docs/BUILD.md
+- crates/private-inference-rent/KANBAN.md
+
+Never cargo/rustc/npm on the laptop. ssh "$REZERVE_LAB_HOST" only for compile/test.
+
+The pass bar is the same actions as production, contained in local e2e:
+1. public SDL ask
+2. ChaCha OOB bid; chain stores 32-byte commitments only
+3. ZAP1+Halo2 attest credits a FROST DKG pool (not dealer)
+4. provider allocate after commit match
+5. pir serve: container spawned + HTTP 200
+6. close grant from LC-class attrs
+7. two Ironwood spends (earned + remainder) of the opened note
+8. winner bearer denied
+
+Launch `/workflow rezerve-production-loop {"mode":"craft","scope":"all"}` if you are the scheduler. product_loop=true only with quoted lab-host ssh of that sequence. Skip-green is not a pass.
+
+Do not mark KANBAN done without that ssh. Do not restart cancelled NS observe.

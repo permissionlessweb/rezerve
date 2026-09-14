@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 280" role="img" aria-labelledby="t d">
+  <title id="t">First demonstration</title>
+  <desc id="d">Three parts of the first demo, left to right: an additional market on Terp Network, FROST signers as Penumbra validator sidecars, and providers running a custom Akash provider image.</desc>
+  <rect width="960" height="280" fill="#f8fafc"/>
+  <text x="24" y="28" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" font-weight="700" letter-spacing="0.12em" fill="#0f172a">FIRST DEMONSTRATION</text>
+  <g font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">
+    <rect x="24" y="48" width="280" height="168" rx="12" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="164" y="88" font-size="13" font-weight="700" fill="#1e3a8a">1 · Additional market</text>
+    <text x="164" y="116" font-size="16" font-weight="700" fill="#0f172a">Terp Network</text>
+    <text x="164" y="142" font-size="12" fill="#334155">Sealed bid, commitments,</text>
+    <text x="164" y="160" font-size="12" fill="#334155">CosmWasm match, pay inclusion</text>
+    <text x="164" y="186" font-size="11" fill="#64748b">Beside public Akash, not instead of it</text>
+    <polygon points="316,124 332,132 316,140" fill="#0f172a"/>
+    <rect x="340" y="48" width="280" height="168" rx="12" fill="#d1fae5" stroke="#059669"/>
+    <text x="480" y="88" font-size="13" font-weight="700" fill="#065f46">2 · Threshold signers</text>
+    <text x="480" y="116" font-size="16" font-weight="700" fill="#0f172a">Penumbra sidecars</text>
+    <text x="480" y="142" font-size="12" fill="#334155">FROST t-of-n, configurable</text>
+    <text x="480" y="160" font-size="12" fill="#334155">First demo: t=2, n=3</text>
+    <text x="480" y="186" font-size="11" fill="#64748b">Validator key, not a dealer</text>
+    <polygon points="632,124 648,132 632,140" fill="#0f172a"/>
+    <rect x="656" y="48" width="280" height="168" rx="12" fill="#fef3c7" stroke="#d97706"/>
+    <text x="796" y="88" font-size="13" font-weight="700" fill="#92400e">3 · Compute</text>
+    <text x="796" y="116" font-size="16" font-weight="700" fill="#0f172a">Custom Akash provider</text>
+    <text x="796" y="142" font-size="12" fill="#334155">provider-services with PIR gate</text>
+    <text x="796" y="160" font-size="12" fill="#334155">Public market when PIR is off</text>
+    <text x="796" y="186" font-size="11" fill="#64748b">Not the stock public image yet</text>
+  </g>
+  <text x="24" y="250" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" fill="#475569">Terp records the market. Sidecars hold the threshold key. The custom provider allocates and serves.</text>
+</svg>

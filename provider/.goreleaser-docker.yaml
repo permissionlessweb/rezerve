@@ -1,0 +1,202 @@
+---
+version: 2
+project_name: provider
+env:
+  - GO111MODULE=on
+  - DOCKER_CLI_EXPERIMENTAL="enabled"
+  - CGO_ENABLED=1
+before:
+  hooks:
+    - apt update
+    - apt install -y pkg-config libudev-dev:amd64 libudev-dev:arm64
+builds:
+  - id: provider-services-linux-arm64
+    binary: provider-services
+    main: ./cmd/provider-services
+    goarch:
+      - arm64
+    goos:
+      - linux
+    env:
+      - CC=aarch64-linux-gnu-gcc
+      - CXX=aarch64-linux-gnu-g++
+    flags:
+      - "-mod={{ .Env.MOD }}"
+      - "-tags={{ .Env.BUILD_TAGS }}"
+      - -trimpath
+    ldflags:
+      - "{{ .Env.BUILD_LDFLAGS }}"
+      - -s -w
+      - -linkmode=external
+      - -extldflags "-L./.cache/lib -lwasmvm_muslc.aarch64 -Wl,-z,muldefs -lm -lrt -lc -lpthread"
+  - id: provider-services-linux-amd64
+    binary: provider-services
+    main: ./cmd/provider-services
+    goarch:
+      - amd64
+    goos:
+      - linux
+    env:
+      - CC=x86_64-linux-gnu-gcc
+      - CXX=x86_64-linux-gnu-g++
+    flags:
+      - "-mod={{ .Env.MOD }}"
+      - "-tags={{ .Env.BUILD_TAGS }}"
+      - -trimpath
+    ldflags:
+      - "{{ .Env.BUILD_LDFLAGS }}"
+      - -s -w
+      - -linkmode=external
+      - -extldflags "-L./.cache/lib -lwasmvm_muslc.x86_64 -Wl,-z,muldefs -lm -lrt -lc -lpthread"
+  - id: provider-services-linux-arm64-debug
+    binary: provider-services
+    main: ./cmd/provider-services
+    goarch:
+      - arm64
+    goos:
+      - linux
+    env:
+      - CC=aarch64-linux-gnu-gcc
+      - CXX=aarch64-linux-gnu-g++
+    flags:
+      - "-mod={{ .Env.MOD }}"
+      - "-tags={{ .Env.BUILD_TAGS }}"
+      - -trimpath
+    ldflags:
+      - "{{ .Env.BUILD_LDFLAGS }}"
+      - -linkmode=external
+      - -extldflags "-L./.cache/lib -lwasmvm_muslc.aarch64 -Wl,-z,muldefs -lm -lrt -lc -lpthread"
+    gcflags:
+      - "all=-N -l"
+  - id: provider-services-linux-amd64-debug
+    binary: provider-services
+    main: ./cmd/provider-services
+    goarch:
+      - amd64
+    goos:
+      - linux
+    env:
+      - CC=x86_64-linux-gnu-gcc
+      - CXX=x86_64-linux-gnu-g++
+    flags:
+      - "-mod={{ .Env.MOD }}"
+      - "-tags={{ .Env.BUILD_TAGS }}"
+      - -trimpath
+    ldflags:
+      - "{{ .Env.BUILD_LDFLAGS }}"
+      - -linkmode=external
+      - -extldflags "-L./.cache/lib -lwasmvm_muslc.x86_64 -Wl,-z,muldefs -lm -lrt -lc -lpthread"
+    gcflags:
+      - "all=-N -l"
+  - id: attestation-sidecar-linux-amd64
+    binary: attestation-sidecar
+    dir: sidecar/attestation
+    main: .
+    goarch:
+      - amd64
+    goos:
+      - linux
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+archives:
+  - formats:
+      - binary
+dockers:
+  - dockerfile: Dockerfile
+    ids:
+      - provider-services-linux-amd64
+    use: buildx
+    goos: linux
+    goarch: amd64
+    build_flag_templates:
+      - --platform=linux/amd64
+      - --build-arg=GRPCURL_VERSION={{ .Env.GRPCURL_VERSION }}
+      - --build-arg=GRPCURL_SHA256_AMD64={{ .Env.GRPCURL_SHA256_AMD64 }}
+      - --build-arg=GRPCURL_SHA256_ARM64={{ .Env.GRPCURL_SHA256_ARM64 }}
+      - --label=org.opencontainers.image.title={{ .ProjectName }}
+      - --label=org.opencontainers.image.description={{ .ProjectName }}
+      - --label=org.opencontainers.image.url={{.GitURL}}
+      - --label=org.opencontainers.image.source={{.GitURL}}
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.created={{ time "2006-01-02T15:04:05Z07:00" }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+    image_templates:
+      - "{{ .Env.DOCKER_IMAGE }}:latest-amd64"
+  - dockerfile: Dockerfile
+    ids:
+      - provider-services-linux-arm64
+    use: buildx
+    goos: linux
+    goarch: arm64
+    build_flag_templates:
+      - --platform=linux/arm64
+      - --build-arg=GRPCURL_VERSION={{ .Env.GRPCURL_VERSION }}
+      - --build-arg=GRPCURL_SHA256_AMD64={{ .Env.GRPCURL_SHA256_AMD64 }}
+      - --build-arg=GRPCURL_SHA256_ARM64={{ .Env.GRPCURL_SHA256_ARM64 }}
+      - --label=org.opencontainers.image.title={{ .ProjectName }}
+      - --label=org.opencontainers.image.description={{ .ProjectName }}
+      - --label=org.opencontainers.image.url={{.GitURL}}
+      - --label=org.opencontainers.image.source={{.GitURL}}
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.created={{ time "2006-01-02T15:04:05Z07:00" }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+    image_templates:
+      - "{{ .Env.DOCKER_IMAGE }}:latest-arm64"
+  - dockerfile: Dockerfile.debug
+    ids:
+      - provider-services-linux-amd64-debug
+    use: buildx
+    goos: linux
+    goarch: amd64
+    build_flag_templates:
+      - --platform=linux/amd64
+      - --label=org.opencontainers.image.title={{ .ProjectName }}
+      - --label=org.opencontainers.image.description={{ .ProjectName }}
+      - --label=org.opencontainers.image.url={{.GitURL}}
+      - --label=org.opencontainers.image.source={{.GitURL}}
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.created={{ time "2006-01-02T15:04:05Z07:00" }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+    image_templates:
+      - "{{ .Env.DOCKER_IMAGE }}:latest-amd64-debug"
+  - dockerfile: Dockerfile.debug
+    ids:
+      - provider-services-linux-arm64-debug
+    use: buildx
+    goos: linux
+    goarch: arm64
+    build_flag_templates:
+      - --platform=linux/arm64
+      - --label=org.opencontainers.image.title={{ .ProjectName }}
+      - --label=org.opencontainers.image.description={{ .ProjectName }}
+      - --label=org.opencontainers.image.url={{.GitURL}}
+      - --label=org.opencontainers.image.source={{.GitURL}}
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.created={{ time "2006-01-02T15:04:05Z07:00" }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+    image_templates:
+      - "{{ .Env.DOCKER_IMAGE }}:latest-arm64-debug"
+  - dockerfile: sidecar/attestation/Dockerfile
+    ids:
+      - attestation-sidecar-linux-amd64
+    use: buildx
+    goos: linux
+    goarch: amd64
+    extra_files:
+      - sidecar/attestation/nvml-helper
+    build_flag_templates:
+      - --platform=linux/amd64
+      - --build-arg=NVML_SRC=sidecar/attestation/nvml-helper/nvml_attestation.c
+      - --label=org.opencontainers.image.title=attestation-sidecar
+      - --label=org.opencontainers.image.description=TEE attestation sidecar for Akash confidential compute
+      - --label=org.opencontainers.image.url={{.GitURL}}
+      - --label=org.opencontainers.image.source={{.GitURL}}
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.created={{ time "2006-01-02T15:04:05Z07:00" }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+    image_templates:
+      - "{{ .Env.DOCKER_IMAGE }}-attestation-sidecar:latest"

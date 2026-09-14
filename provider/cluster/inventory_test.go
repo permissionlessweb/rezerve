@@ -1,0 +1,883 @@
+package cluster
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	tpubsub "github.com/troian/pubsub"
+	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/client-go/kubernetes"
+	kfake "k8s.io/client-go/kubernetes/fake"
+
+	inventoryV1 "pkg.akt.dev/go/inventory/v1"
+	manifest "pkg.akt.dev/go/manifest/v2beta3"
+	dvbeta "pkg.akt.dev/go/node/deployment/v1beta4"
+	mtypes "pkg.akt.dev/go/node/market/v1"
+	attrtypes "pkg.akt.dev/go/node/types/attributes/v1"
+	rtypes "pkg.akt.dev/go/node/types/resources/v1beta4"
+	"pkg.akt.dev/go/node/types/unit"
+	"pkg.akt.dev/go/testutil"
+	"pkg.akt.dev/go/util/pubsub"
+
+	ctypes "github.com/akash-network/provider/cluster/types/v1beta3"
+	cinventory "github.com/akash-network/provider/cluster/types/v1beta3/clients/inventory"
+	cip "github.com/akash-network/provider/cluster/types/v1beta3/clients/ip"
+	cfromctx "github.com/akash-network/provider/cluster/types/v1beta3/fromctx"
+	"github.com/akash-network/provider/event"
+	cmocks "github.com/akash-network/provider/mocks/cluster"
+	cmockstypes "github.com/akash-network/provider/mocks/cluster/types"
+	cipmocks "github.com/akash-network/provider/mocks/cluster/types/clients/ip"
+	"github.com/akash-network/provider/operator/waiter"
+	crd "github.com/akash-network/provider/pkg/apis/akash.network/v2beta2"
+	aclient "github.com/akash-network/provider/pkg/client/clientset/versioned"
+	afake "github.com/akash-network/provider/pkg/client/clientset/versioned/fake"
+	"github.com/akash-network/provider/tools/fromctx"
+)
+
+type statusTestInventory struct {
+	snapshot inventoryV1.Cluster
+}
+
+func (inv statusTestInventory) Adjust(ctypes.ReservationGroup, ...ctypes.InventoryOption) error {
+	return nil
+}
+
+func (inv statusTestInventory) Metrics() inventoryV1.Metrics {
+	return inventoryV1.Metrics{}
+}
+
+func (inv statusTestInventory) Snapshot() inventoryV1.Cluster {
+	return *inv.snapshot.Dup()
+}
+
+func (inv statusTestInventory) Dup() ctypes.Inventory {
+	return statusTestInventory{snapshot: *inv.snapshot.Dup()}
+}
+
+func TestInventory_reservationAllocatable(t *testing.T) {
+	mkrg := func(cpu uint64, gpu uint64, memory uint64, storage uint64, endpointsCount uint, count uint32) dvbeta.ResourceUnit {
+		endpoints := make(rtypes.Endpoints, endpointsCount)
+		return dvbeta.ResourceUnit{
+			Resources: rtypes.Resources{
+				ID: 1,
+				CPU: &rtypes.CPU{
+					Units: rtypes.NewResourceValue(cpu),
+				},
+				GPU: &rtypes.GPU{
+					Units: rtypes.NewResourceValue(gpu),
+				},
+				Memory: &rtypes.Memory{
+					Quantity: rtypes.NewResourceValue(memory),
+				},
+				Storage: []rtypes.Storage{
+					{
+						Quantity: rtypes.NewResourceValue(storage),
+					},
+				},
+				Endpoints: endpoints,
+			},
+			Count: count,
+		}
+	}
+
+	mkres := func(allocated bool, res ...dvbeta.ResourceUnit) *reservation {
+		return &reservation{
+			allocated: allocated,
+			resources: &dvbeta.GroupSpec{Resources: res},
+		}
+	}
+
+	inv := <-cinventory.NewNull(context.Background(), "a", "b").ResultChan()
+
+	reservations := []*reservation{
+		mkres(true, mkrg(750, 0, 3*unit.Gi, 1*unit.Gi, 0, 1)),
+		mkres(true, mkrg(100, 0, 4*unit.Gi, 1*unit.Gi, 0, 2)),
+		mkres(true, mkrg(2000, 0, 3*unit.Gi, 1*unit.Gi, 0, 2)),
+		mkres(true, mkrg(250, 0, 12*unit.Gi, 1*unit.Gi, 0, 2)),
+		mkres(true, mkrg(100, 0, 1*unit.G, 1*unit.Gi, 1, 2)),
+		mkres(true, mkrg(100, 0, 4*unit.G, 1*unit.Gi, 0, 1)),
+		mkres(true, mkrg(100, 0, 4*unit.G, 98*unit.Gi, 0, 1)),
+		mkres(true, mkrg(250, 0, 1*unit.G, 1*unit.Gi, 0, 1)),
+	}
+
+	for idx, r := range reservations {
+		err := inv.Adjust(r)
+		require.NoErrorf(t, err, "reservation %d: %v", idx, r)
+	}
+}
+
+func TestInventory_ClusterDeploymentNotDeployed(t *testing.T) {
+	config := Config{
+		InventoryResourcePollPeriod:     time.Second,
+		InventoryResourceDebugFrequency: 1,
+		InventoryExternalPortQuantity:   1000,
+	}
+	myLog := testutil.Logger(t)
+	bus := pubsub.NewBus()
+	subscriber, err := bus.Subscribe()
+	require.NoError(t, err)
+
+	deployments := make([]ctypes.IDeployment, 0)
+
+	clusterClient := &cmocks.Client{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = context.WithValue(ctx, fromctx.CtxKeyPubSub, tpubsub.New(ctx, 1000))
+
+	kc := kfake.NewClientset()
+	ac := afake.NewClientset()
+
+	ctx = context.WithValue(ctx, fromctx.CtxKeyKubeClientSet, kubernetes.Interface(kc))
+	ctx = context.WithValue(ctx, fromctx.CtxKeyAkashClientSet, aclient.Interface(ac))
+	ctx = context.WithValue(ctx, cfromctx.CtxKeyClientInventory, cinventory.NewNull(ctx, "nodeA"))
+
+	inv, err := newInventoryService(
+		ctx,
+		config,
+		myLog,
+		subscriber,
+		clusterClient,
+		waiter.NewNullWaiter(), // Do not need to wait in test
+		deployments)
+	require.NoError(t, err)
+	require.NotNil(t, inv)
+
+	cancel()
+	<-inv.lc.Done()
+
+	// No ports used yet
+	require.Equal(t, uint(1000), inv.availableExternalPorts)
+}
+
+func TestInventory_ClusterDeploymentDeployed(t *testing.T) {
+	lid := testutil.LeaseID(t)
+	config := Config{
+		InventoryResourcePollPeriod:     time.Second,
+		InventoryResourceDebugFrequency: 1,
+		InventoryExternalPortQuantity:   1000,
+	}
+	myLog := testutil.Logger(t)
+	bus := pubsub.NewBus()
+	subscriber, err := bus.Subscribe()
+	require.NoError(t, err)
+
+	deployments := make([]ctypes.IDeployment, 1)
+	deployment := &cmockstypes.IDeployment{}
+	deployment.On("LeaseID").Return(lid)
+
+	groupServices := make(manifest.Services, 1)
+
+	serviceCount := testutil.RandRangeInt(1, 10)
+	serviceEndpoints := make(rtypes.Endpoints, serviceCount)
+
+	countOfRandomPortService := testutil.RandRangeInt(0, serviceCount)
+	for i := range serviceEndpoints {
+		if i < countOfRandomPortService {
+			serviceEndpoints[i].Kind = rtypes.Endpoint_RANDOM_PORT
+		} else {
+			serviceEndpoints[i].Kind = rtypes.Endpoint_SHARED_HTTP
+		}
+	}
+
+	groupServices[0] = manifest.Service{
+		Count: 1,
+		Resources: rtypes.Resources{
+			ID: 1,
+			CPU: &rtypes.CPU{
+				Units: rtypes.NewResourceValue(1),
+			},
+			GPU: &rtypes.GPU{
+				Units: rtypes.NewResourceValue(0),
+			},
+			Memory: &rtypes.Memory{
+				Quantity: rtypes.NewResourceValue(1 * unit.Gi),
+			},
+			Storage: []rtypes.Storage{
+				{
+					Name:     "default",
+					Quantity: rtypes.NewResourceValue(1 * unit.Gi),
+				},
+			},
+			Endpoints: serviceEndpoints,
+		},
+	}
+	group := manifest.Group{
+		Name:     "nameForGroup",
+		Services: groupServices,
+	}
+
+	deployment.On("ManifestGroup").Return(&group)
+	deployment.On("ClusterParams").Return(crd.ClusterSettings{})
+
+	deployments[0] = deployment
+
+	clusterClient := &cmocks.Client{}
+
+	// clusterInv := newInventory("nodeA")
+	//
+	// inventoryCalled := make(chan int, 1)
+	// clusterClient.On("Inventory", mock.Anything).Run(func(args mock.Arguments) {
+	// 	inventoryCalled <- 0 // Value does not matter
+	// }).Return(clusterInv, nil)
+
+	kc := kfake.NewClientset()
+	ac := afake.NewClientset()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = context.WithValue(ctx, fromctx.CtxKeyPubSub, tpubsub.New(ctx, 1000))
+	ctx = context.WithValue(ctx, fromctx.CtxKeyKubeClientSet, kubernetes.Interface(kc))
+	ctx = context.WithValue(ctx, fromctx.CtxKeyAkashClientSet, aclient.Interface(ac))
+	ctx = context.WithValue(ctx, cfromctx.CtxKeyClientInventory, cinventory.NewNull(ctx, "nodeA"))
+
+	inv, err := newInventoryService(
+		ctx,
+		config,
+		myLog,
+		subscriber,
+		clusterClient,
+		waiter.NewNullWaiter(), // Do not need to wait in test
+		deployments)
+	require.NoError(t, err)
+	require.NotNil(t, inv)
+
+	// Wait for first call to inventory
+	// <-inventoryCalled
+
+	// Send the event immediately, twice
+	// Second version does nothing
+	err = bus.Publish(event.ClusterDeployment{
+		LeaseID: lid,
+		Group: &manifest.Group{
+			Name:     "nameForGroup",
+			Services: nil,
+		},
+		Status: event.ClusterDeploymentDeployed,
+	})
+	require.NoError(t, err)
+
+	err = bus.Publish(event.ClusterDeployment{
+		LeaseID: lid,
+		Group: &manifest.Group{
+			Name:     "nameForGroup",
+			Services: nil,
+		},
+		Status: event.ClusterDeploymentDeployed,
+	})
+	require.NoError(t, err)
+
+	// Wait for second call to inventory
+	// <-inventoryCalled
+
+	// wait for cluster deployment to be active
+	// needed to avoid data race in reading availableExternalPorts
+	for {
+		status, err := inv.status(context.Background())
+		require.NoError(t, err)
+
+		if len(status.Active) != 0 {
+			break
+		}
+
+		time.Sleep(time.Second / 2)
+	}
+
+	// availableExternalEndpoints should be consumed because of the deployed reservation
+	require.Equal(t, uint(1000-countOfRandomPortService), inv.availableExternalPorts) // nolint: gosec
+
+	// Unreserving the allocated reservation should reclaim the availableExternalEndpoints
+	err = inv.unreserve(lid.OrderID())
+	require.NoError(t, err)
+	require.Equal(t, uint(1000), inv.availableExternalPorts)
+
+	// Shut everything down
+	cancel()
+	<-inv.lc.Done()
+}
+
+type inventoryScaffold struct {
+	leaseIDs []mtypes.LeaseID
+	donech   chan struct{}
+	// inventoryCalled chan struct{}
+	bus           pubsub.Bus
+	clusterClient *cmocks.Client
+}
+
+func makeInventoryScaffold(t *testing.T, leaseQty uint) *inventoryScaffold {
+	scaffold := &inventoryScaffold{
+		donech: make(chan struct{}),
+	}
+
+	for i := uint(0); i != leaseQty; i++ {
+		scaffold.leaseIDs = append(scaffold.leaseIDs, testutil.LeaseID(t))
+	}
+
+	scaffold.bus = pubsub.NewBus()
+
+	groupServices := make([]manifest.Service, 1)
+	serviceCount := testutil.RandRangeInt(1, 50)
+	serviceEndpoints := make(rtypes.Endpoints, serviceCount)
+
+	countOfRandomPortService := testutil.RandRangeInt(0, serviceCount)
+	for i := range serviceEndpoints {
+		if i < countOfRandomPortService {
+			serviceEndpoints[i].Kind = rtypes.Endpoint_RANDOM_PORT
+		} else {
+			serviceEndpoints[i].Kind = rtypes.Endpoint_SHARED_HTTP
+		}
+	}
+
+	deploymentRequirements := rtypes.Resources{
+		ID: 1,
+		CPU: &rtypes.CPU{
+			Units: rtypes.NewResourceValue(4000),
+		},
+		GPU: &rtypes.GPU{
+			Units: rtypes.NewResourceValue(0),
+		},
+		Memory: &rtypes.Memory{
+			Quantity: rtypes.NewResourceValue(30 * unit.Gi),
+		},
+		Storage: rtypes.Volumes{
+			rtypes.Storage{
+				Name:     "default",
+				Quantity: rtypes.NewResourceValue((100 * unit.Gi) - 1*unit.Mi),
+			},
+		},
+	}
+
+	deploymentRequirements.Endpoints = serviceEndpoints
+
+	groupServices[0] = manifest.Service{
+		Count:     1,
+		Resources: deploymentRequirements,
+	}
+
+	cclient := &cmocks.Client{}
+
+	scaffold.clusterClient = cclient
+
+	return scaffold
+}
+
+func makeGroupForInventoryTest(sharedHTTP, nodePort, leasedIP bool) manifest.Group {
+	groupServices := make([]manifest.Service, 1)
+
+	serviceEndpoints := make(rtypes.Endpoints, 0)
+	seqno := uint32(0)
+	if sharedHTTP {
+		serviceEndpoint := rtypes.Endpoint{
+			Kind:           rtypes.Endpoint_SHARED_HTTP,
+			SequenceNumber: seqno,
+		}
+		serviceEndpoints = append(serviceEndpoints, serviceEndpoint)
+	}
+
+	if nodePort {
+		serviceEndpoint := rtypes.Endpoint{
+			Kind:           rtypes.Endpoint_RANDOM_PORT,
+			SequenceNumber: seqno,
+		}
+		serviceEndpoints = append(serviceEndpoints, serviceEndpoint)
+	}
+
+	if leasedIP {
+		serviceEndpoint := rtypes.Endpoint{
+			Kind:           rtypes.Endpoint_LEASED_IP,
+			SequenceNumber: seqno,
+		}
+		serviceEndpoints = append(serviceEndpoints, serviceEndpoint)
+	}
+
+	deploymentRequirements := rtypes.Resources{
+		ID: 1,
+		CPU: &rtypes.CPU{
+			Units: rtypes.NewResourceValue(4000),
+		},
+		GPU: &rtypes.GPU{
+			Units: rtypes.NewResourceValue(0),
+		},
+		Memory: &rtypes.Memory{
+			Quantity: rtypes.NewResourceValue(30 * unit.Gi),
+		},
+		Storage: rtypes.Volumes{
+			rtypes.Storage{
+				Name:     "default",
+				Quantity: rtypes.NewResourceValue((100 * unit.Gi) - 1*unit.Mi),
+			},
+		},
+	}
+	deploymentRequirements.Endpoints = serviceEndpoints
+
+	groupServices[0] = manifest.Service{
+		Count:     1,
+		Resources: deploymentRequirements,
+	}
+	group := manifest.Group{
+		Name:     "nameForGroup",
+		Services: groupServices,
+	}
+
+	return group
+}
+
+func TestInventory_StatusV1ReportsLeasedIPResourcePair(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	inv := <-cinventory.NewNull(ctx, "nodeA").ResultChan()
+	reservationWithIPs := func(quantity uint, confirmed bool) *reservation {
+		return &reservation{
+			resources:        &dvbeta.GroupSpec{},
+			endpointQuantity: quantity,
+			ipsConfirmed:     confirmed,
+		}
+	}
+
+	status, err := (&inventoryService{}).getStatusV1(&inventoryServiceState{
+		inventory: inv,
+		ipAddrUsage: cip.AddressUsage{
+			Available: 10,
+			InUse:     4,
+		},
+		reservations: []*reservation{
+			reservationWithIPs(2, false),
+			reservationWithIPs(3, true),
+			reservationWithIPs(1, false),
+		},
+	})
+	require.NoError(t, err)
+
+	leasedIP := status.GetLeasedIP()
+	require.Equal(t, int64(10), leasedIP.GetCapacity().Value())
+	require.Equal(t, int64(10), leasedIP.GetAllocatable().Value())
+	require.Equal(t, int64(7), leasedIP.GetAllocated().Value())
+	require.Equal(t, int64(3), leasedIP.Available().Value())
+}
+
+func TestInventory_StatusV1SaturatesLeasedIPResourcePairAvailable(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	inv := <-cinventory.NewNull(ctx, "nodeA").ResultChan()
+	status, err := (&inventoryService{}).getStatusV1(&inventoryServiceState{
+		inventory: inv,
+		ipAddrUsage: cip.AddressUsage{
+			Available: 3,
+			InUse:     2,
+		},
+		reservations: []*reservation{
+			{
+				resources:        &dvbeta.GroupSpec{},
+				endpointQuantity: 4,
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	leasedIP := status.GetLeasedIP()
+	require.Equal(t, int64(3), leasedIP.GetCapacity().Value())
+	require.Equal(t, int64(3), leasedIP.GetAllocatable().Value())
+	require.Equal(t, int64(6), leasedIP.GetAllocated().Value())
+	require.Equal(t, int64(0), leasedIP.Available().Value())
+}
+
+func TestInventory_StatusV1SanitizesNegativeClusterSnapshot(t *testing.T) {
+	snapshot := inventoryV1.Cluster{
+		Nodes: inventoryV1.Nodes{
+			{
+				Name: "node",
+				Resources: inventoryV1.NodeResources{
+					CPU: inventoryV1.CPU{
+						Quantity: inventoryV1.NewResourcePairMilli(1000, -500, -250, resource.DecimalSI),
+					},
+					Memory: inventoryV1.Memory{
+						Quantity: inventoryV1.NewResourcePair(-1, 1024, -1, resource.DecimalSI),
+					},
+					GPU: inventoryV1.GPU{
+						Quantity: inventoryV1.NewResourcePair(4, -1, -1, resource.DecimalSI),
+					},
+					EphemeralStorage: inventoryV1.NewResourcePair(100, -1, -1, resource.DecimalSI),
+					VolumesAttached:  inventoryV1.NewResourcePair(0, 0, 0, resource.DecimalSI),
+					VolumesMounted:   inventoryV1.NewResourcePair(0, 0, 0, resource.DecimalSI),
+				},
+			},
+		},
+		Storage: inventoryV1.ClusterStorage{
+			{
+				Quantity: inventoryV1.NewResourcePair(50, -1, -1, resource.DecimalSI),
+				Info:     inventoryV1.StorageInfo{Class: "default"},
+			},
+		},
+	}
+
+	status, err := (&inventoryService{}).getStatusV1(&inventoryServiceState{
+		inventory: statusTestInventory{snapshot: snapshot},
+	})
+	require.NoError(t, err)
+
+	node := status.Cluster.Nodes[0]
+	require.Equal(t, int64(0), node.Resources.CPU.Quantity.Allocatable.MilliValue())
+	require.Equal(t, int64(0), node.Resources.CPU.Quantity.Allocated.MilliValue())
+	require.Equal(t, int64(0), node.Resources.Memory.Quantity.Capacity.Value())
+	require.Equal(t, int64(0), node.Resources.Memory.Quantity.Allocated.Value())
+	require.Equal(t, int64(0), node.Resources.GPU.Quantity.Allocatable.Value())
+	require.Equal(t, int64(0), node.Resources.GPU.Quantity.Allocated.Value())
+	require.Equal(t, int64(0), node.Resources.EphemeralStorage.Allocatable.Value())
+	require.Equal(t, int64(0), node.Resources.EphemeralStorage.Allocated.Value())
+	require.Equal(t, int64(0), status.Cluster.Storage[0].Quantity.Allocatable.Value())
+	require.Equal(t, int64(0), status.Cluster.Storage[0].Quantity.Allocated.Value())
+}
+
+func TestInventory_ReserveIPNoIPOperator(t *testing.T) {
+	config := Config{
+		InventoryResourcePollPeriod:     5 * time.Second,
+		InventoryResourceDebugFrequency: 1,
+		InventoryExternalPortQuantity:   1000,
+	}
+	scaffold := makeInventoryScaffold(t, 10)
+	defer scaffold.bus.Close()
+
+	myLog := testutil.Logger(t)
+
+	subscriber, err := scaffold.bus.Subscribe()
+	require.NoError(t, err)
+
+	kc := kfake.NewClientset()
+	ac := afake.NewClientset()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = context.WithValue(ctx, fromctx.CtxKeyPubSub, tpubsub.New(ctx, 1000))
+	ctx = context.WithValue(ctx, fromctx.CtxKeyKubeClientSet, kubernetes.Interface(kc))
+	ctx = context.WithValue(ctx, fromctx.CtxKeyAkashClientSet, aclient.Interface(ac))
+	ctx = context.WithValue(ctx, cfromctx.CtxKeyClientInventory, cinventory.NewNull(ctx, "nodeA"))
+
+	inv, err := newInventoryService(
+		ctx,
+		config,
+		myLog,
+		subscriber,
+		scaffold.clusterClient,
+		waiter.NewNullWaiter(), // Do not need to wait in test
+		make([]ctypes.IDeployment, 0))
+	require.NoError(t, err)
+	require.NotNil(t, inv)
+
+	group := makeGroupForInventoryTest(false, false, true)
+	reservation, err := inv.reserve(scaffold.leaseIDs[0].OrderID(), group)
+	require.ErrorIs(t, err, errNoLeasedIPsAvailable)
+	require.Nil(t, reservation)
+
+	// Shut everything down
+	cancel()
+	close(scaffold.donech)
+	<-inv.lc.Done()
+}
+
+func TestInventory_ReserveIPUnavailableWithIPOperator(t *testing.T) {
+	config := Config{
+		InventoryResourcePollPeriod:     5 * time.Second,
+		InventoryResourceDebugFrequency: 1,
+		InventoryExternalPortQuantity:   1000,
+	}
+	scaffold := makeInventoryScaffold(t, 10)
+	defer scaffold.bus.Close()
+
+	myLog := testutil.Logger(t)
+
+	subscriber, err := scaffold.bus.Subscribe()
+	require.NoError(t, err)
+
+	mockIP := &cipmocks.Client{}
+
+	ipQty := testutil.RandRangeInt(1, 100)
+	mockIP.On("GetIPAddressUsage", mock.Anything).Return(cip.AddressUsage{
+		Available: uint(ipQty), // nolint: gosec
+		InUse:     uint(ipQty), // nolint: gosec
+	}, nil)
+	mockIP.On("Stop")
+
+	kc := kfake.NewClientset()
+	ac := afake.NewClientset()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = context.WithValue(ctx, fromctx.CtxKeyPubSub, tpubsub.New(ctx, 1000))
+	ctx = context.WithValue(ctx, fromctx.CtxKeyKubeClientSet, kubernetes.Interface(kc))
+	ctx = context.WithValue(ctx, fromctx.CtxKeyAkashClientSet, aclient.Interface(ac))
+	ctx = context.WithValue(ctx, cfromctx.CtxKeyClientInventory, cinventory.NewNull(ctx, "nodeA"))
+	ctx = context.WithValue(ctx, cfromctx.CtxKeyClientIP, cip.Client(mockIP))
+
+	inv, err := newInventoryService(
+		ctx,
+		config,
+		myLog,
+		subscriber,
+		scaffold.clusterClient,
+		waiter.NewNullWaiter(), // Do not need to wait in test
+		make([]ctypes.IDeployment, 0))
+	require.NoError(t, err)
+	require.NotNil(t, inv)
+
+	group := makeGroupForInventoryTest(false, false, true)
+	reservation, err := inv.reserve(scaffold.leaseIDs[0].OrderID(), group)
+	require.ErrorIs(t, err, errInsufficientIPs)
+	require.Nil(t, reservation)
+
+	// Shut everything down
+	cancel()
+	close(scaffold.donech)
+	<-inv.lc.Done()
+}
+
+func TestInventory_ReserveIPAvailableWithIPOperator(t *testing.T) {
+	config := Config{
+		InventoryResourcePollPeriod:     4 * time.Second,
+		InventoryResourceDebugFrequency: 1,
+		InventoryExternalPortQuantity:   1000,
+	}
+
+	scaffold := makeInventoryScaffold(t, 2)
+	defer scaffold.bus.Close()
+
+	myLog := testutil.Logger(t)
+
+	subscriber, err := scaffold.bus.Subscribe()
+	require.NoError(t, err)
+
+	mockIP := &cipmocks.Client{}
+
+	ipQty := testutil.RandRangeInt(5, 10)
+	mockIP.On("GetIPAddressUsage", mock.Anything).Return(cip.AddressUsage{
+		Available: uint(ipQty),     // nolint: gosec
+		InUse:     uint(ipQty - 1), // nolint: gosec
+	}, nil)
+
+	ipAddrStatusCalled := make(chan struct{}, 2)
+	// First call indicates no data
+	mockIP.On("GetIPAddressStatus", mock.Anything, scaffold.leaseIDs[0].OrderID()).Run(func(_ mock.Arguments) {
+		ipAddrStatusCalled <- struct{}{}
+	}).Return([]cip.LeaseIPStatus{}, nil).Once()
+	// Second call indicates the IP is there and can be confirmed
+	mockIP.On("GetIPAddressStatus", mock.Anything, scaffold.leaseIDs[0].OrderID()).Run(func(_ mock.Arguments) {
+		ipAddrStatusCalled <- struct{}{}
+	}).Return([]cip.LeaseIPStatus{
+		{
+			Port:         1234,
+			ExternalPort: 1234,
+			ServiceName:  "foobar",
+			IP:           "24.1.2.3",
+			Protocol:     "TCP",
+		},
+	}, nil).Once()
+
+	mockIP.On("Stop")
+
+	kc := kfake.NewClientset()
+	ac := afake.NewClientset()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = context.WithValue(ctx, fromctx.CtxKeyPubSub, tpubsub.New(ctx, 1000))
+	ctx = context.WithValue(ctx, fromctx.CtxKeyKubeClientSet, kubernetes.Interface(kc))
+	ctx = context.WithValue(ctx, fromctx.CtxKeyAkashClientSet, aclient.Interface(ac))
+	ctx = context.WithValue(ctx, cfromctx.CtxKeyClientInventory, cinventory.NewNull(ctx, "nodeA", "nodeB"))
+	ctx = context.WithValue(ctx, cfromctx.CtxKeyClientIP, cip.Client(mockIP))
+
+	inv, err := newInventoryService(
+		ctx,
+		config,
+		myLog,
+		subscriber,
+		scaffold.clusterClient,
+		waiter.NewNullWaiter(), // Do not need to wait in test
+		make([]ctypes.IDeployment, 0))
+	require.NoError(t, err)
+	require.NotNil(t, inv)
+
+	group := makeGroupForInventoryTest(false, false, true)
+	reservation, err := inv.reserve(scaffold.leaseIDs[0].OrderID(), group)
+	require.NoError(t, err)
+	require.NotNil(t, reservation)
+	require.False(t, reservation.Allocated())
+
+	// next reservation fails
+	reservation, err = inv.reserve(scaffold.leaseIDs[1].OrderID(), group)
+	require.ErrorIs(t, err, errInsufficientIPs)
+	require.Nil(t, reservation)
+
+	err = scaffold.bus.Publish(event.ClusterDeployment{
+		LeaseID: scaffold.leaseIDs[0],
+		Group:   &group,
+		Status:  event.ClusterDeploymentDeployed,
+	})
+	require.NoError(t, err)
+
+	testutil.ChannelWaitForValueUpTo(t, ipAddrStatusCalled, 30*time.Second)
+	testutil.ChannelWaitForValueUpTo(t, ipAddrStatusCalled, 30*time.Second)
+
+	// with the 1st reservation confirmed, this one passes now
+	reservation, err = inv.reserve(scaffold.leaseIDs[1].OrderID(), group)
+	require.NoError(t, err)
+	require.NotNil(t, reservation)
+
+	// Shut everything down
+	cancel()
+	close(scaffold.donech)
+	<-inv.lc.Done()
+
+	mockIP.AssertNumberOfCalls(t, "GetIPAddressStatus", 2)
+}
+
+// following test needs refactoring it reports incorrect inventory
+func TestInventory_OverReservations(t *testing.T) {
+	scaffold := makeInventoryScaffold(t, 10)
+	defer scaffold.bus.Close()
+	lid0 := scaffold.leaseIDs[0]
+	lid1 := scaffold.leaseIDs[1]
+	myLog := testutil.Logger(t)
+
+	subscriber, err := scaffold.bus.Subscribe()
+	require.NoError(t, err)
+	defer subscriber.Close()
+
+	groupServices := make([]manifest.Service, 1)
+
+	serviceCount := testutil.RandRangeInt(1, 50)
+	serviceEndpoints := make(rtypes.Endpoints, serviceCount)
+
+	countOfRandomPortService := testutil.RandRangeInt(0, serviceCount)
+	for i := range serviceEndpoints {
+		if i < countOfRandomPortService {
+			serviceEndpoints[i].Kind = rtypes.Endpoint_RANDOM_PORT
+		} else {
+			serviceEndpoints[i].Kind = rtypes.Endpoint_SHARED_HTTP
+		}
+	}
+
+	deploymentRequirements := rtypes.Resources{
+		CPU: &rtypes.CPU{
+			Units: rtypes.NewResourceValue(4000),
+		},
+		GPU: &rtypes.GPU{
+			Units: rtypes.NewResourceValue(0),
+		},
+		Memory: &rtypes.Memory{
+			Quantity: rtypes.NewResourceValue(30 * unit.Gi),
+		},
+		Storage: rtypes.Volumes{
+			rtypes.Storage{
+				Name:     "default",
+				Quantity: rtypes.NewResourceValue((100 * unit.Gi) - 1*unit.Mi),
+			},
+		},
+	}
+	deploymentRequirements.Endpoints = serviceEndpoints
+
+	groupServices[0] = manifest.Service{
+		Count:     1,
+		Resources: deploymentRequirements,
+	}
+	group := manifest.Group{
+		Name:     "nameForGroup",
+		Services: groupServices,
+	}
+
+	config := Config{
+		InventoryResourcePollPeriod:     5 * time.Second,
+		InventoryResourceDebugFrequency: 1,
+		InventoryExternalPortQuantity:   1000,
+	}
+
+	kc := kfake.NewClientset()
+	ac := afake.NewClientset()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	nullInv := cinventory.NewNull(ctx, "nodeA")
+
+	ctx = context.WithValue(ctx, fromctx.CtxKeyPubSub, tpubsub.New(ctx, 1000))
+	ctx = context.WithValue(ctx, fromctx.CtxKeyKubeClientSet, kubernetes.Interface(kc))
+	ctx = context.WithValue(ctx, fromctx.CtxKeyAkashClientSet, aclient.Interface(ac))
+	ctx = context.WithValue(ctx, cfromctx.CtxKeyClientInventory, nullInv)
+
+	inv, err := newInventoryService(
+		ctx,
+		config,
+		myLog,
+		subscriber,
+		scaffold.clusterClient,
+		waiter.NewNullWaiter(), // Do not need to wait in test
+		make([]ctypes.IDeployment, 0))
+	require.NoError(t, err)
+	require.NotNil(t, inv)
+
+	// Get the reservation
+	reservation, err := inv.reserve(lid0.OrderID(), group)
+	require.NoError(t, err)
+	require.NotNil(t, reservation)
+
+	// Confirm the second reservation would be too much
+	_, err = inv.reserve(lid1.OrderID(), group)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ctypes.ErrInsufficientCapacity)
+
+	nullInv.Commit(reservation.Resources())
+
+	// Send the event immediately to indicate it was deployed
+	err = scaffold.bus.Publish(event.ClusterDeployment{
+		LeaseID: lid0,
+		Group: &manifest.Group{
+			Name:     "nameForGroup",
+			Services: nil,
+		},
+		Status: event.ClusterDeploymentDeployed,
+	})
+	require.NoError(t, err)
+
+	// Give the inventory goroutine time to process the event
+	time.Sleep(1 * time.Second)
+
+	// Confirm the second reservation still is too much
+	_, err = inv.reserve(lid1.OrderID(), group)
+	require.ErrorIs(t, err, ctypes.ErrInsufficientCapacity)
+
+	// Shut everything down
+	cancel()
+	close(scaffold.donech)
+	<-inv.lc.Done()
+
+	// No ports used yet
+	require.Equal(t, uint(1000-countOfRandomPortService), inv.availableExternalPorts) // nolint: gosec
+}
+
+// placementRequirements must survive the resources-to-commit copy for every
+// concrete ResourceGroup shape the bid path produces — an empty extraction
+// silently disables the tenant's `capabilities/gpu-interconnect/fabric/...`
+// pin in the inventory client's Adjust (CS-6 / AKT-406 regression).
+func TestPlacementRequirementsPreserved(t *testing.T) {
+	attrs := attrtypes.Attributes{
+		{Key: "capabilities/gpu-interconnect", Value: "true"},
+		{Key: "capabilities/gpu-interconnect/fabric/infiniband", Value: "true"},
+	}
+	spec := dvbeta.GroupSpec{
+		Name: "ic",
+		Requirements: attrtypes.PlacementRequirements{
+			Attributes: attrs,
+		},
+	}
+
+	for name, rg := range map[string]dvbeta.ResourceGroup{
+		"GroupSpec":  spec,
+		"*GroupSpec": &spec,
+		"Group":      dvbeta.Group{GroupSpec: spec},
+		"*Group":     &dvbeta.Group{GroupSpec: spec},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, attrs, placementRequirements(rg).Attributes)
+		})
+	}
+
+	t.Run("unknown type stays permissive", func(t *testing.T) {
+		require.Empty(t, placementRequirements(nil).Attributes)
+	})
+}

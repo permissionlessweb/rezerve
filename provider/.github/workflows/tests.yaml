@@ -1,0 +1,129 @@
+---
+name: tests
+
+defaults:
+  run:
+    shell: bash
+
+# yamllint disable-line rule:truthy
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - v*
+
+jobs:
+  build-bins:
+    runs-on: core-e2e
+    steps:
+      - name: Cleanup build folder
+        run: |
+          sudo rm -rf ./* || true
+          sudo rm -rf ./.??* || true
+          sudo rm -rf $HOME/go/pkg/mod || true
+      - uses: actions/checkout@v4
+      - name: Setup environment
+        uses: ./.github/actions/setup-ubuntu
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - run: make build
+      - run: make provider-services
+      - run: make docker-image
+
+  tests:
+    runs-on: [self-hosted, akash]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup environment
+        uses: ./.github/actions/setup-ubuntu
+      - run: make test-full
+
+  lint:
+    runs-on: [self-hosted, akash]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup environment
+        uses: ./.github/actions/setup-ubuntu
+      - name: Run linter
+        run: make lint
+
+  release-dry-run:
+    runs-on: core-e2e
+    env:
+      DOCKER_CLI_EXPERIMENTAL: "enabled"
+    steps:
+      - name: Cleanup build folder
+        run: |
+          sudo rm -rf ./* || true
+          sudo rm -rf ./.??* || true
+      - uses: actions/checkout@v4
+      - name: Setup environment
+        uses: ./.github/actions/setup-ubuntu
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - uses: fregante/setup-git-user@v2
+      - name: configure git tag
+        run: echo "RELEASE_TAG=v$(./script/semver.sh bump patch $(git describe --tags --abbrev=0))" >> $GITHUB_ENV
+      - name: git tag
+        run: git tag -a ${{ env.RELEASE_TAG }} -m ${{ env.RELEASE_TAG }}
+      - name: release dry-run
+        run: make release
+
+  coverage:
+    runs-on: [self-hosted, akash]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup environment
+        uses: ./.github/actions/setup-ubuntu
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          files: .cache/tests/coverage.txt
+
+  yamlcheck:
+    runs-on: [self-hosted, akash]
+    steps:
+      - uses: actions/checkout@v4
+      - name: check-yml-count
+        run: |
+          if [[ $(git ls-files '*.yml' ':!:.codecov.yml' | wc -l) -ne 0 ]]; then git ls-files '*.yml' ':!:.codecov.yml' && exit 1;fi
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup environment
+        uses: ./.github/actions/setup-ubuntu
+      - run: make shellcheck
+
+  integration-tests:
+    uses: ./.github/workflows/integration-tests.yaml
+
+  dispatch-release:
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.ref, 'refs/tags/v')
+    needs:
+      - build-bins
+      - tests
+      - lint
+      - release-dry-run
+      - coverage
+      - yamlcheck
+      - shellcheck
+      - integration-tests
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: trigger release process
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: release.yaml

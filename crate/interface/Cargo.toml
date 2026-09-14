@@ -1,0 +1,18 @@
+[package]
+name = "pir-cw-orch"
+version = "0.1.0"
+edition = "2021"
+description = "cw-orch interfaces + Deploy suite for PIR CosmWasm contracts"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+cosmwasm-std = "1.5"
+cw-orch = "0.24"
+cw-pir-commit = { path = "../cw-commit" }
+cw-pir-escrow = { path = "../cw-escrow" }
+cw-zap1-ibcv2 = { path = "../cw-zap1-ibcv2" }
+cw-ics08-wasm-zap1 = { path = "../../terp-rs/contracts/light-clients/cw-ics08-wasm-zap1" }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

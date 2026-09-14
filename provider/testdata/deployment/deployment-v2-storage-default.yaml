@@ -1,0 +1,65 @@
+---
+version: "2.0"
+services:
+  web:
+    image: ovrclk/e2e-test
+    expose:
+      - port: 8080
+        as: 80
+        to:
+          - global: true
+        accept:
+          - webdistest.localhost
+    params:
+      storage:
+        data:
+          mount: /var/lib/e2e-test
+  bew:
+    image: ovrclk/e2e-test
+    expose:
+      - port: 8080
+        as: 81
+        to:
+          - global: true
+        accept:
+          - webdistest2.localhost
+profiles:
+  compute:
+    web:
+      resources:
+        cpu:
+          units: "0.01"
+        memory:
+          size: "128Mi"
+        storage:
+          - size: "512Mi"
+          - name: data
+            size: "128Mi"
+            attributes:
+              persistent: "true"
+    bew:
+      resources:
+        cpu:
+          units: "0.01"
+        memory:
+          size: "128Mi"
+        storage:
+          - size: "512Mi"
+  placement:
+    global:
+      pricing:
+        web:
+          denom: uact
+          amount: 100
+        bew:
+          denom: uact
+          amount: 100
+deployment:
+  web:
+    global:
+      profile: web
+      count: 1
+  bew:
+    global:
+      profile: bew
+      count: 1

@@ -1,0 +1,86 @@
+[package]
+name = "private-inference-rent"
+version = "0.1.0"
+edition = "2021"
+description = "Offline compute-rent workflow simulator (local hashes; optional Stoffel CLI confirm)"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "private-inference-demo"
+path = "src/bin/demo.rs"
+
+[[bin]]
+name = "pir-frost-holder"
+path = "src/bin/pir-frost-holder.rs"
+
+[[bin]]
+name = "pir-party"
+path = "src/bin/pir-party.rs"
+
+[[bin]]
+name = "svg-mint-ironwood"
+path = "src/bin/svg-mint-ironwood.rs"
+
+[[bin]]
+name = "pir-zap1-lc"
+path = "src/bin/pir-zap1-lc.rs"
+
+[[bin]]
+name = "pir-export-halo2"
+path = "src/bin/pir-export-halo2.rs"
+required-features = ["export-halo2"]
+
+[features]
+default = ["sim"]
+export-halo2 = ["hosting-payment/store-full-circuit"]
+# Sim transcripts (`prove`, `credit_transcript`). Omit for product-only builds.
+sim = []
+live-ict = []
+live-zcash = []
+# Native Zakura spawn is always compiled (ict-rs-compatible). Alias for docs/CI.
+zakura = []
+seam-dex = ["dep:terp-seams"]
+e2e = ["seam-dex", "sim"]
+# cw-orch Deploy suite (Mock + Daemon). Not pulled into default wasm-adjacent tests.
+cw-orch-suite = ["dep:pir-cw-orch", "dep:cw-orch", "dep:cosmwasm-std"]
+
+[[test]]
+name = "e2e_local"
+path = "tests/e2e_local.rs"
+required-features = ["e2e"]
+
+[[test]]
+name = "escrow_cw_orch"
+path = "tests/escrow_cw_orch.rs"
+required-features = ["cw-orch-suite"]
+
+[[test]]
+name = "arbiter_compose"
+path = "tests/arbiter_compose.rs"
+required-features = ["cw-orch-suite"]
+
+[dependencies]
+terp-seams = { path = "../terp-rs/crates/terp-seams", optional = true, default-features = false, features = ["dex"] }
+chacha20poly1305 = "0.10"
+frost-ed25519 = "2.1"
+getrandom = "0.2"
+hex = "0.4"
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+thiserror = "2.0"
+zap1-verify = "0.2.1"
+hosting-payment = { path = "circuits/hosting-payment" }
+orchard = { version = "0.15", features = ["circuit"] }
+incrementalmerkletree = "0.8"
+zcash_primitives = { version = "0.30", features = ["transparent-inputs", "circuits"] }
+zcash_protocol = "0.10"
+zcash_transparent = { version = "0.10", features = ["transparent-inputs"] }
+zcash_script = "0.4"
+secp256k1 = { version = "0.29", features = ["global-context"] }
+zcash_proofs = { version = "0.30", features = ["bundled-prover"] }
+cw-ics08-wasm-zap1 = { path = "../terp-rs/contracts/light-clients/cw-ics08-wasm-zap1" }
+pir-cw-orch = { path = "interface", optional = true }
+cw-orch = { version = "0.24", optional = true }
+cosmwasm-std = { version = "1.5", optional = true }

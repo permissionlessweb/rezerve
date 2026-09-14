@@ -1,0 +1,14 @@
+North-star OBSERVE pulse (do not implement).
+
+Read and follow:
+- /Users/returniflost/abstract/terp-core/crates/private-inference-rent/docs/NORTH_STAR_LOOP.md
+- .../KANBAN.md (status column is truth)
+
+Use tools (read_file, grep, ssh "$REZERVE_LAB_HOST"). Do not answer from memory.
+
+1. List NS1–NS8 with Status. Name the `doing` card.
+2. On lab-host: curl ZAKURA_RPC getblockchaininfo (18232) and docker ps pir-zakura-local. Report exact result or exact failure. Skip is not green.
+3. Check whether the `doing` card Pass is already enforced by a test in private-inference-rent (read tests, do not invent).
+4. Report: lab_ok bool, card, pass_already_tested bool, blockers[], next_human_command (either wait or `/workflow pir-north-star {"card":"NS1","mode":"craft"}`).
+
+Do not edit source. Do not mark kanban done.

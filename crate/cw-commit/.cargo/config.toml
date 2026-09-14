@@ -1,0 +1,11 @@
+[target.wasm32-unknown-unknown]
+# Guest wasm: rustc ≥ 1.87 emits memory.copy/fill. That only stores on the
+# CosmWasm/wasmd/terp-core fork with metered bulk-memory. ict-rs default
+# `terpnetwork/terp-core:local-zk` does not enable it → MSRV for this crate
+# is rustc 1.86 (build on the lab host). Never cargo wasm on the laptop.
+rustflags = [
+    "-C", "link-arg=--no-entry",
+    "-C", "link-arg=--allow-undefined",
+    "-C", "target-cpu=mvp",
+    "-C", "target-feature=-bulk-memory,-sign-ext,-mutable-globals,-nontrapping-fptoint,-multivalue,-reference-types",
+]

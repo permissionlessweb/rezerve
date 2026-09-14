@@ -1,0 +1,30 @@
+version: "2.0"
+services:
+  inference:
+    image: private/inference:latest
+    expose:
+      - port: 8080
+        as: 80
+        to:
+          - global: true
+profiles:
+  compute:
+    inference:
+      resources:
+        cpu:
+          units: 2
+        memory:
+          size: 8Gi
+        gpu:
+          units: 1
+  placement:
+    dcloud:
+      pricing:
+        inference:
+          denom: uakt
+          amount: 1000
+deployment:
+  inference:
+    dcloud:
+      profile: inference
+      count: 1

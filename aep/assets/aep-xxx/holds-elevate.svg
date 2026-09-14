@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" role="img" aria-labelledby="t d">
+  <title id="t">What holds on Akash versus what re-zerve must elevate</title>
+  <desc id="d">Left column: public Akash pieces that stay. Right column: side-market pieces that exist in the lab fork and must be elevated to become the default path.</desc>
+  <rect width="960" height="420" fill="#f8fafc"/>
+  <rect x="24" y="48" width="440" height="348" rx="12" fill="#eff6ff" stroke="#2563eb"/>
+  <rect x="496" y="48" width="440" height="348" rx="12" fill="#fffbeb" stroke="#d97706"/>
+  <text x="44" y="32" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" font-weight="700" letter-spacing="0.12em" fill="#2563eb">STAYS ON AKASH</text>
+  <text x="516" y="32" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" font-weight="700" letter-spacing="0.12em" fill="#b45309">PRIVATE PATH ADDS</text>
+  <g font-family="ui-sans-serif,system-ui,sans-serif" font-size="15" fill="#0f172a">
+    <text x="48" y="88">SDL / deployment / order</text>
+    <text x="48" y="118">Public bid engine when PIR unset</text>
+    <text x="48" y="148">Hostname operator</text>
+    <text x="48" y="178">Inventory operator</text>
+    <text x="48" y="208">ES256K JWT on the public lease</text>
+    <text x="48" y="238">AKT / USDC escrow on public leases</text>
+    <text x="48" y="268">Stock provider image on public market</text>
+    <text x="48" y="298">Same provider-services process</text>
+    <text x="48" y="348" font-size="13" fill="#334155">Public bidding and cluster operators</text>
+    <text x="48" y="368" font-size="13" fill="#334155">keep working when the private path is off.</text>
+    <text x="520" y="88">Encrypted bid envelope (price off book)</text>
+    <text x="520" y="118">Commitment store + Match before allocate</text>
+    <text x="520" y="148">Derived access bearer (not JWT)</text>
+    <text x="520" y="178">FROST t-of-n (sidecars hold shares)</text>
+    <text x="520" y="208">ZAP1 + Halo2 + IBC v2 pay inclusion</text>
+    <text x="520" y="238">CosmWasm commit / escrow grant</text>
+    <text x="520" y="268">Ironwood two-spend close</text>
+    <text x="520" y="298">PIR provider image (Dockerfile.pir)</text>
+    <text x="520" y="348" font-size="13" fill="#334155">Ships in the re-zerve provider build.</text>
+    <text x="520" y="368" font-size="13" fill="#334155">Not yet the default public Akash image.</text>
+  </g>
+</svg>

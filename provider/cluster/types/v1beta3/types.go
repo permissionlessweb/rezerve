@@ -1,0 +1,303 @@
+package v1beta3
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+
+	eventsv1 "k8s.io/api/events/v1"
+
+	sdktypes "github.com/cosmos/cosmos-sdk/types"
+
+	inventoryV1 "pkg.akt.dev/go/inventory/v1"
+	mtypes "pkg.akt.dev/go/node/market/v1"
+)
+
+type ProviderResourceEvent string
+
+const (
+	ProviderResourceAdd    = ProviderResourceEvent("add")
+	ProviderResourceUpdate = ProviderResourceEvent("update")
+	ProviderResourceDelete = ProviderResourceEvent("delete")
+)
+
+var (
+	// ErrInsufficientCapacity is the new error when capacity is insufficient
+	ErrInsufficientCapacity  = errors.New("insufficient capacity")
+	ErrGroupResourceMismatch = errors.New("group resource mismatch")
+	// ErrInvalidInterconnectGroup rejects bids whose interconnect group
+	// label could never be applied to a pod: the group name is stamped
+	// verbatim as a Kubernetes label value (and anti-affinity selector),
+	// so a name the kube API would reject at admission must fail the bid
+	// instead of producing a paid lease whose workloads cannot deploy.
+	ErrInvalidInterconnectGroup = errors.New("invalid interconnect group")
+)
+
+// ServiceLog stores name, stream and scanner
+type ServiceLog struct {
+	Name    string
+	Stream  io.ReadCloser
+	Scanner *bufio.Scanner
+}
+
+type LeaseEventObject struct {
+	Kind      string `json:"kind" yaml:"kind"`
+	Namespace string `json:"namespace" yaml:"namespace"`
+	Name      string `json:"name" yaml:"name"`
+}
+
+type LeaseEvent struct {
+	Type                string           `json:"type" yaml:"type"`
+	ReportingController string           `json:"reportingController,omitempty" yaml:"reportingController"`
+	ReportingInstance   string           `json:"reportingInstance,omitempty" yaml:"reportingInstance"`
+	Reason              string           `json:"reason" yaml:"reason"`
+	Note                string           `json:"note" yaml:"note"`
+	Object              LeaseEventObject `json:"object" yaml:"object"`
+}
+
+// TEEType represents a validated TEE capability identifier.
+// The provider determines the actual TEE technology (AMD SEV-SNP or Intel TDX)
+// at deployment time based on node capabilities.
+type TEEType string
+
+const (
+	TEETypeNone   TEEType = ""
+	TEETypeCPU    TEEType = "cpu"
+	TEETypeCPUGPU TEEType = "cpu-gpu"
+)
+
+// ParseTEEType validates a raw string and returns the corresponding TEEType.
+// Returns TEETypeNone for empty strings. Returns an error for unknown values.
+func ParseTEEType(s string) (TEEType, error) {
+	switch TEEType(s) {
+	case TEETypeNone, TEETypeCPU, TEETypeCPUGPU:
+		return TEEType(s), nil
+	default:
+		return TEETypeNone, fmt.Errorf("unknown TEE type: %q", s)
+	}
+}
+
+// IsCC returns true if this TEE type represents a confidential compute workload.
+func (t TEEType) IsCC() bool { return t != TEETypeNone }
+
+// IsGPU returns true if this TEE type requires GPU confidential compute.
+func (t TEEType) IsGPU() bool { return t == TEETypeCPUGPU }
+
+// RuntimeClass identifies a Kubernetes RuntimeClass for workload scheduling.
+type RuntimeClass string
+
+func (rc RuntimeClass) String() string {
+	return string(rc)
+}
+
+const (
+	RuntimeClassKataQemuSNP          RuntimeClass = "kata-qemu-snp"
+	RuntimeClassKataQemuNvidiaGPUSNP RuntimeClass = "kata-qemu-nvidia-gpu-snp"
+	RuntimeClassKataQemuTDX          RuntimeClass = "kata-qemu-tdx"
+	RuntimeClassKataQemuNvidiaGPUTDX RuntimeClass = "kata-qemu-nvidia-gpu-tdx"
+)
+
+type runtimeClassFilter struct {
+	cc  bool
+	gpu bool
+	snp bool
+	tdx bool
+}
+
+type RuntimeClassOption func(*runtimeClassFilter)
+
+func WithCC() RuntimeClassOption {
+	return func(f *runtimeClassFilter) { f.cc = true }
+}
+
+func WithGPU() RuntimeClassOption {
+	return func(f *runtimeClassFilter) { f.gpu = true }
+}
+
+func WithSNP() RuntimeClassOption {
+	return func(f *runtimeClassFilter) { f.snp = true }
+}
+
+func WithTDX() RuntimeClassOption {
+	return func(f *runtimeClassFilter) { f.tdx = true }
+}
+
+var runtimeClassAttrs = map[RuntimeClass]runtimeClassFilter{
+	RuntimeClassKataQemuSNP:          {cc: true, snp: true},
+	RuntimeClassKataQemuNvidiaGPUSNP: {cc: true, snp: true, gpu: true},
+	RuntimeClassKataQemuTDX:          {cc: true, tdx: true},
+	RuntimeClassKataQemuNvidiaGPUTDX: {cc: true, tdx: true, gpu: true},
+}
+
+// Is checks whether rc is a known runtime class matching all the given
+// filters. With no options it matches any known runtime class.
+func (rc RuntimeClass) Is(opts ...RuntimeClassOption) bool {
+	attrs, known := runtimeClassAttrs[rc]
+	if !known {
+		return false
+	}
+
+	for _, opt := range opts {
+		var required runtimeClassFilter
+		opt(&required)
+
+		if required.cc && !attrs.cc {
+			return false
+		}
+		if required.gpu && !attrs.gpu {
+			return false
+		}
+		if required.snp && !attrs.snp {
+			return false
+		}
+		if required.tdx && !attrs.tdx {
+			return false
+		}
+	}
+
+	return true
+}
+
+// TEEPlatform represents the detected TEE platform on the cluster nodes.
+type TEEPlatform string
+
+const (
+	TEEPlatformNone TEEPlatform = ""
+	TEEPlatformTDX  TEEPlatform = "tdx"
+	TEEPlatformSNP  TEEPlatform = "snp"
+)
+
+type InventoryOptions struct {
+	DryRun      bool
+	TEEType     TEEType
+	TEEPlatform TEEPlatform // detected at startup from node labels
+}
+
+type InventoryOption func(*InventoryOptions) *InventoryOptions
+
+func WithDryRun() InventoryOption {
+	return func(opts *InventoryOptions) *InventoryOptions {
+		opts.DryRun = true
+		return opts
+	}
+}
+
+func WithTEEType(t TEEType) InventoryOption {
+	return func(opts *InventoryOptions) *InventoryOptions {
+		opts.TEEType = t
+		return opts
+	}
+}
+
+func WithTEEPlatform(t TEEPlatform) InventoryOption {
+	return func(opts *InventoryOptions) *InventoryOptions {
+		opts.TEEPlatform = t
+		return opts
+	}
+}
+
+type Inventory interface {
+	Adjust(ReservationGroup, ...InventoryOption) error
+	Metrics() inventoryV1.Metrics
+	Snapshot() inventoryV1.Cluster
+	Dup() Inventory
+}
+
+type EventsWatcher interface {
+	Shutdown()
+	Done() <-chan struct{}
+	ResultChan() <-chan *eventsv1.Event
+	SendEvent(*eventsv1.Event) bool
+}
+
+type eventsFeed struct {
+	ctx    context.Context
+	cancel func()
+	feed   chan *eventsv1.Event
+}
+
+var _ EventsWatcher = (*eventsFeed)(nil)
+
+func NewEventsFeed(ctx context.Context) EventsWatcher {
+	ctx, cancel := context.WithCancel(ctx)
+	return &eventsFeed{
+		ctx:    ctx,
+		cancel: cancel,
+		feed:   make(chan *eventsv1.Event),
+	}
+}
+
+func (e *eventsFeed) Shutdown() {
+	e.cancel()
+}
+
+func (e *eventsFeed) Done() <-chan struct{} {
+	return e.ctx.Done()
+}
+
+func (e *eventsFeed) SendEvent(evt *eventsv1.Event) bool {
+	select {
+	case e.feed <- evt:
+		return true
+	case <-e.ctx.Done():
+		return false
+	}
+}
+
+func (e *eventsFeed) ResultChan() <-chan *eventsv1.Event {
+	return e.feed
+}
+
+type ExecResult interface {
+	ExitCode() int
+}
+
+// // ServiceStatus stores the current status of service
+// type ServiceStatus struct {
+// 	Name      string   `json:"name"`
+// 	Available int32    `json:"available"`
+// 	Total     int32    `json:"total"`
+// 	URIs      []string `json:"uris"`
+//
+// 	ObservedGeneration int64 `json:"observed_generation"`
+// 	Replicas           int32 `json:"replicas"`
+// 	UpdatedReplicas    int32 `json:"updated_replicas"`
+// 	ReadyReplicas      int32 `json:"ready_replicas"`
+// 	AvailableReplicas  int32 `json:"available_replicas"`
+// }
+//
+// type ForwardedPortStatus struct {
+// 	Host         string                   `json:"host,omitempty"`
+// 	Port         uint16                   `json:"port"`
+// 	ExternalPort uint16                   `json:"externalPort"`
+// 	Proto        manifest.ServiceProtocol `json:"proto"`
+// 	Name         string                   `json:"name"`
+// }
+//
+// // LeaseStatus includes list of services with their status
+// type LeaseStatus struct {
+// 	Services       map[string]*ServiceStatus        `json:"services"`
+// 	ForwardedPorts map[string][]ForwardedPortStatus `json:"forwarded_ports"` // Container services that are externally accessible
+// }
+
+type HostnameServiceClient interface {
+	ReserveHostnames(ctx context.Context, hostnames []string, leaseID mtypes.LeaseID) ([]string, error)
+	ReleaseHostnames(leaseID mtypes.LeaseID) error
+	CanReserveHostnames(hostnames []string, ownerAddr sdktypes.Address) error
+	PrepareHostnamesForTransfer(ctx context.Context, hostnames []string, leaseID mtypes.LeaseID) error
+}
+
+// FilterGPUInterface ensures interface values are always lower case
+// generalizes sxm* to sxm
+func FilterGPUInterface(val string) string {
+	val = strings.ToLower(val)
+
+	if strings.HasPrefix(val, "sxm") {
+		val = "sxm"
+	}
+
+	return val
+}

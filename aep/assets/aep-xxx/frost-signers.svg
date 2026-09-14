@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" role="img" aria-labelledby="t d">
+  <title id="t">First-demo FROST placement</title>
+  <desc id="d">Three Penumbra validator sidecars share a FROST key. One sidecar runs on Akash. Two run locally in isolated Wasmer containers. Any two signatures verify as the group.</desc>
+  <rect width="960" height="300" fill="#f8fafc"/>
+  <text x="24" y="28" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" font-weight="700" letter-spacing="0.12em" fill="#0f172a">FROST PLACEMENT · FIRST DEMO (t=2, n=3)</text>
+  <rect x="300" y="48" width="360" height="64" rx="10" fill="#e0e7ff" stroke="#4338ca"/>
+  <text x="480" y="76" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif" font-size="15" font-weight="700" fill="#312e81">Group verifying key</text>
+  <text x="480" y="96" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif" font-size="12" fill="#334155">any t signatures verify as this key</text>
+  <line x1="360" y1="112" x2="164" y2="168" stroke="#4338ca" stroke-width="2"/>
+  <line x1="480" y1="112" x2="480" y2="168" stroke="#4338ca" stroke-width="2"/>
+  <line x1="600" y1="112" x2="796" y2="168" stroke="#4338ca" stroke-width="2"/>
+  <polygon points="158,160 164,168 172,158" fill="#4338ca"/>
+  <polygon points="476,160 480,168 484,160" fill="#4338ca"/>
+  <polygon points="788,158 796,168 802,160" fill="#4338ca"/>
+  <g font-family="ui-sans-serif,system-ui,sans-serif" text-anchor="middle">
+    <rect x="24" y="168" width="280" height="88" rx="10" fill="#fef3c7" stroke="#d97706"/>
+    <text x="164" y="204" font-size="14" font-weight="700" fill="#92400e">Sidecar 1 · Akash</text>
+    <text x="164" y="228" font-size="12" fill="#334155">hosted provider lease</text>
+    <rect x="340" y="168" width="280" height="88" rx="10" fill="#d1fae5" stroke="#059669"/>
+    <text x="480" y="204" font-size="14" font-weight="700" fill="#065f46">Sidecar 2 · local Wasmer</text>
+    <text x="480" y="228" font-size="12" fill="#334155">isolated container</text>
+    <rect x="656" y="168" width="280" height="88" rx="10" fill="#d1fae5" stroke="#059669"/>
+    <text x="796" y="204" font-size="14" font-weight="700" fill="#065f46">Sidecar 3 · local Wasmer</text>
+    <text x="796" y="228" font-size="12" fill="#334155">isolated container</text>
+  </g>
+  <text x="24" y="282" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" fill="#475569">n and t are parameters. This drawing is the first-demo placement, not a fixed product constant.</text>
+</svg>

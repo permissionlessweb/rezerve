@@ -1,0 +1,18 @@
+# Local MPC: open four expected limbs and four got limbs, then clear-compare.
+# HoneyBadger 0.1 does not implement secret CMP.
+# HoneyBadger 0.1 has no secret CMP — open then compare.
+def main() -> int64:
+  var e0 = ClientStore.take_share(0, 0).open()
+  var e1 = ClientStore.take_share(0, 1).open()
+  var e2 = ClientStore.take_share(0, 2).open()
+  var e3 = ClientStore.take_share(0, 3).open()
+  var g0 = ClientStore.take_share(1, 0).open()
+  var g1 = ClientStore.take_share(1, 1).open()
+  var g2 = ClientStore.take_share(1, 2).open()
+  var g3 = ClientStore.take_share(1, 3).open()
+  if e0 == g0:
+    if e1 == g1:
+      if e2 == g2:
+        if e3 == g3:
+          return 1
+  return 0

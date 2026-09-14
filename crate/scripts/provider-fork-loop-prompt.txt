@@ -1,0 +1,16 @@
+Provider-fork OBSERVE pulse (do not implement unless asked).
+
+Read:
+- crates/private-inference-rent/docs/PROVIDER_FORK.md
+- crates/private-inference-rent/src/access.rs
+- crates/private-inference-rent/KANBAN.md NS10 if present
+- crates/ergors/tests/scripts/jwt-verify/go.mod (replace path exists?)
+
+Use tools. Do not edit.
+
+1. fork_present: does crates/akash-provider-pir exist with gateway/pir and AuthProcess PIR hook?
+2. Run `go test ./gateway/pir ./bidengine` in that tree if go exists.
+3. PIR tests only via ssh "$REZERVE_LAB_HOST" (never laptop cargo): `cargo test --test rent_rounds --test provider_engine --test access_derive`.
+2. jwt: does jwt-verify still use ES256K + missing replace path?
+3. DerivedAccess tests: is tests/access_derive.rs present?
+4. Report: fork_present, jwt_ok, derived_access_ok, next (`/workflow pir-provider-fork {"mode":"observe"}` or craft).
