@@ -87,6 +87,30 @@ bearer_hex = hex(tagged_hash("pir-access-bearer-v1", secret))
 
 Winner opens. Foreign bearer denied. After `pir stop` / close, winner denied.
 
+## `BidAskPir` (proposed)
+
+Private information retrieval of sealed bids and public asks. The courier is an untrusted **provider proxy**. It MUST NOT learn which row was queried. Design mirrors Valar Group PIR (YPIR / SimplePIR).
+
+| Field | Type | Notes |
+|---|---|---|
+| `row_id` | u64 | Index in the PIR database (not sent in the clear) |
+| `row` | bytes | Fixed-size: envelope *or* ask commitment blob |
+| `kind` | enum | `sealed_bid` \| `public_ask` |
+| `query` | PIR query | Client hides `row_id` |
+| `answer` | PIR answer | Only the client recovers `row` |
+| `db_root` / hint | per scheme | YPIR silent preprocessing as in `valar-ypir` |
+
+Direct OOB without this object is the crate today. This object is a required upcoming dependency.
+
+## `ProviderProxy` (proposed)
+
+| Field | Type | Notes |
+|---|---|---|
+| `endpoint` | URL | Serves PIR queries |
+| `operator` | string | MAY be a third party, not the bidding provider |
+| `index` | PIR database | Rows of `BidAskPir.row` |
+| `trust` | — | Untrusted for query identity. Trusted only to return *some* answer; authenticity is the AEAD / commitment, not the proxy. |
+
 ## `FrostParams`
 
 RFC 9591 FROST-ed25519. `t` of `n` is configuration, not a new market.

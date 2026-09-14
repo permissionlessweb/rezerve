@@ -5,7 +5,7 @@ author: Terp Network
 status: Draft
 type: Standard
 created: 2026-09-09
-description: "Extend Akash market access with a sealed-bid path, AKT-stake inclusion, and collaborative FROST."
+description: "Extend Akash market access: sealed bids, AKT-stake inclusion, collaborative FROST, and PIR retrieval of bids via untrusted proxies."
 category: Core
 updated: 2026-09-14
 ---
@@ -18,21 +18,24 @@ Akash is a public compute marketplace: a deployer posts SDL, an order opens, pro
 
 It specifies a **private bid path inside `provider-services`**. The order stays public. The bid is sealed; the public record stores a commitment, not a price. Allocate follows a match on that commitment. The lease credential is a derived bearer rather than the public tenant JWT. Close is two shielded spends whose signers include the provider.
 
+Out-of-band bid and ask traffic MUST be fetchable by **private information retrieval (PIR)** so an untrusted **provider proxy** can serve the index without learning *which* bid or ask a renter or provider retrieved. That severs the association graph that a naive OOB channel would publish. The crate name `private-inference-rent` and env prefixes `PIR_*` are historical for the side-market gate. Cryptographic PIR is a **separate** dependency, designed after [Valar Group](https://github.com/valargroup) PIR (YPIR / SimplePIR as used in vote-nullifier and spendability retrieval).
+
 The public path remains the default when the private path is off. Status: Draft. The behavior described here runs in the accompanying crate and provider build.
 
 ## Thesis
 
-This AEP is biased on three points. They belong in the first page and in committee review.
+This AEP is biased on four points. They belong in the first page and in committee review.
 
 | Bias | Claim |
 |---|---|
 | **Extend Akash market access** | Providers stay on the public Supercloud. The private path is more access, not a fork of the marketplace. |
 | **AKT buy-and-hold** | A market bidder SHOULD prove, in zero knowledge, a **minimum AKT stake** before the sealed bid counts. Inclusion in a staking tree — not a public dump of the bonding account — creates buy-and-hold pressure on AKT. |
 | **FROST as collaboration** | Threshold signers are a **cross-chain collaborative opportunity**. Penumbra-style validator sidecars are a welcome home for those shares. |
+| **PIR for bids and asks** | Renters retrieve sealed bids (and providers retrieve asks) by **private information retrieval**. An untrusted third-party **provider proxy** MAY host the index. The proxy MUST NOT learn which row was fetched. |
 
-If those three fail, this is just another sealed-bid sidecar. The rest of the document is how to keep them.
+If those fail, this is just another sealed-bid sidecar. The rest of the document is how to keep them.
 
-Field tables: [`data-structures.md`](data-structures.md). PIR crate and Halo2 paths: [`crate-map.md`](crate-map.md).
+Field tables: [`data-structures.md`](data-structures.md). Crate and Halo2 paths: [`crate-map.md`](crate-map.md). Cryptographic PIR (this thesis) is not the `PIR_*` env gate.
 
 ## How it bolts to Akash
 
@@ -176,6 +179,21 @@ Full field tables: [`data-structures.md`](data-structures.md) (`PublicAsk`, `Enc
 | `Match` | `{ matches: bool }` | allocate only if true |
 
 Anyone may read the ask. Competing prices are not on that surface. Open with the wrong AEAD key MUST fail closed. `Match` is stored-hex equality; tampered bid hex MUST NOT match.
+
+### Private information retrieval of bids and asks
+
+A sealed envelope still has to *move*. Direct OOB (email, HTTPS to the provider, a shared inbox) lets the courier draw an **association graph**: who queried which `ask_id`, which provider, when. This AEP requires a PIR surface so that graph is not available to the courier.
+
+| Role | Retrieves | From |
+|---|---|---|
+| Deployer (renter) | Sealed bid envelope(s) matching an ask | Bid index |
+| Provider | Public ask row (and later match metadata) | Ask index |
+
+The index MAY be served by an untrusted **provider proxy**. The proxy stores rows; it answers PIR queries. It MUST NOT learn the queried index. Design follows Valar Group PIR for retrieval (single-server YPIR / SimplePIR as in [vote-nullifier-pir](https://github.com/valargroup/vote-nullifier-pir) and [spendability-pir](https://github.com/valargroup/spendability-pir), crate [`valar-ypir`](https://crates.io/crates/valar-ypir)): database of fixed-size rows, client query hides the row, server returns an answer from which only the client recovers the envelope.
+
+This is **not implemented** in `private-inference-rent` today. Direct OOB ChaCha delivery is the crate’s current path. Cryptographic PIR + the proxy are **upcoming deliverables** (see funding). Env names `PIR_MODE` / `PIR_REQUIRE_COMMIT` remain the side-market **gate**; they are not this retrieval scheme.
+
+Field table: [`BidAskPir`](data-structures.md#bidaskpir-proposed).
 
 ### Allocate only after Match
 
@@ -475,6 +493,8 @@ Full table: [`crate-map.md`](crate-map.md).
 
 **Envelope AEAD.** ChaCha20-Poly1305 with AAD over ask id and nonce. Wrong key and truncated envelopes fail closed. Nonce reuse with the same out-of-band AEAD key breaks confidentiality of that envelope; implementations MUST use a fresh nonce per seal.
 
+**PIR retrieval.** A provider proxy MUST NOT learn which bid or ask row a client fetched. Direct OOB without PIR publishes an association graph; that is not the product path once the PIR dependency ships. Server-side logging of PIR queries by index is forbidden.
+
 **Commitment-only public record.** The commitment store MUST reject non-hex and MUST NOT store price, bidder identity, endpoint, or the envelope. `Match` is equality of stored hex, not a proof of plaintext.
 
 **Bearer derivation.** The derived access bearer is a capability for the winning lease. Logs MUST NOT record the out-of-band AEAD key, envelope plaintext, raw bearer, or derivation inputs. Log ask id, commitment hex, and allocate/deny only. Bearer replay after close MUST fail.
@@ -505,7 +525,9 @@ Full table: [`crate-map.md`](crate-map.md).
 - [Halo2 book](https://zcash.github.io/halo2/) — PLONK arithmetization used by `hosting-payment`.
 - [Pasta curves](https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/) — Pallas/Vesta; this circuit uses Vesta IPA, k=17.
 - `halo2_proofs::plonk::verify_proof` — host `proof_instance_verify`; empty proof fails.
-- PIR crate `private-inference-rent` (`crate/`), circuit `crate/circuits/hosting-payment`, contracts `crate/cw-commit`, `crate/cw-escrow`, `crate/cw-zap1-ibcv2`. Map: [`crate-map.md`](crate-map.md).
+- Crate `private-inference-rent` (`crate/`), circuit `crate/circuits/hosting-payment`, contracts `crate/cw-commit`, `crate/cw-escrow`, `crate/cw-zap1-ibcv2`. Map: [`crate-map.md`](crate-map.md).
+- [YPIR](https://www.usenix.org/conference/usenixsecurity24/presentation/menon) (Menon, Wu, USENIX Security 2024) — single-server PIR with silent preprocessing.
+- [valar-ypir](https://crates.io/crates/valar-ypir) / [vote-nullifier-pir](https://github.com/valargroup/vote-nullifier-pir) / [spendability-pir](https://github.com/valargroup/spendability-pir) — Valar Group PIR to mirror for bid/ask retrieval.
 
 ## Open questions, committee, and funding
 
@@ -516,9 +538,10 @@ This subsection is for the Akash community. The three biases in **Thesis** are t
 1. Does **extending Akash market access** (same `provider-services`, public path default) stay the goal, or is a separate private-only image acceptable?
 2. Is a **ZK inclusion proof of minimum AKT stake** a gate on sealed bids? If yes, what `min_stake_uakt`, which staking tree, which height?
 3. FROST seats as a **cross-chain collaborative opportunity**, including Penumbra-style validator sidecars.
-4. Commitments on Terp vs on Akash itself?
-5. Private gate in-tree in `provider-services`, or a configured fork forever?
-6. What `(n, t)` bounds freeze vs operator configuration?
+4. PIR for bid/ask retrieval: which Valar-group scheme (YPIR vs SimplePIR vs two-tier) and who may run a **provider proxy**?
+5. Commitments on Terp vs on Akash itself?
+6. Private gate in-tree in `provider-services`, or a configured fork forever?
+7. What `(n, t)` bounds freeze vs operator configuration?
 
 ### Improvements (funding surface)
 
@@ -528,6 +551,8 @@ This subsection is for the Akash community. The three biases in **Thesis** are t
 | Light-client interop | `cw-zap1-ibcv2` is attestation, not a selected ICS-08 client. Extend LC interop so pay inclusion is a real client, not a lab module. |
 | Contracts on a non-Terp CosmWasm | Curate `cw-pir-commit` / `cw-pir-escrow` / `cw-zap1-ibcv2` against stock CosmWasm so the market is not a Terp-only fork. |
 | Benchmarks, tests, front end | Allocate/match/close latency; e2e that includes AKT inclusion; a deployer/provider UI that does not dump AEAD. |
+| Cryptographic PIR (bid/ask) | Valar-group-style retrieval so renters fetch sealed bids without the courier learning which row. |
+| Provider proxy | Curate an untrusted third-party proxy that hosts the PIR index. Association graph stays off the proxy. |
 
 ### Roadmap (to decide, not a promise)
 
@@ -538,29 +563,34 @@ This subsection is for the Akash community. The three biases in **Thesis** are t
 | Parameterize FROST | Operators set `n` and `t`. |
 | CosmWasm portability | Same contracts on a non-Terp CosmWasm. |
 | LC interop | Selected IBC client, not only attestation. |
-| Upstream | Whether PIR gate lands in `akash-network/provider`. |
+| Cryptographic PIR | Bid/ask index retrievable without revealing the query. Mirror Valar Group PIR. |
+| Provider proxy | Untrusted courier for that index. |
+| Upstream | Whether the side-market gate lands in `akash-network/provider`. |
 
 ### Decisions for an Akash committee
 
 - Whether sealed bids **extend** the public marketplace or split it.
 - Whether **minimum AKT stake (ZK)** is in scope as buy-and-hold pressure.
 - That FROST is an invitation to collaborate, including Penumbra-style sidecars.
+- That bid/ask **PIR** (private information retrieval) plus an untrusted **provider proxy** is in scope, following Valar Group PIR.
 - SDL / order fields vs Terp-held commitments.
 - Informational (experiment) vs Standard (protocol).
 
 ### Request for research funding
 
-Experiment: extend Akash market access, keep AKT demand via stake inclusion, use FROST as cross-chain collaboration including Penumbra-style sidecars.
+Experiment: extend Akash market access, keep AKT demand via stake inclusion, use FROST as cross-chain collaboration including Penumbra-style sidecars, and retrieve sealed bids by **private information retrieval** through an untrusted provider proxy.
 
 Funding would support:
 
 - First demo (custom provider, Terp market, collaborative sidecars, FROST verify).
 - Spec + circuit for **AKT minimum-stake inclusion**.
+- **Cryptographic PIR** for bid/ask retrieval, leveraging Valar Group PIR (YPIR / SimplePIR as in vote-nullifier and spendability).
+- Curation of a **provider proxy** that can host that index without learning which row a renter or provider fetched.
 - Circuit / proof optimizations (prove time, vk size, host verify).
 - Light-client interop beyond the attestation module.
 - Porting contracts to a **non-Terp CosmWasm**.
 - Benchmarks, tests, and a minimal front end.
-- Independent review of the sealed-bid gate, bearer, and sidecar isolation.
+- Independent review of the sealed-bid gate, bearer, sidecar isolation, and PIR query privacy.
 
 Scoped to that work and this AEP. Not a claim that public Akash already runs this path.
 

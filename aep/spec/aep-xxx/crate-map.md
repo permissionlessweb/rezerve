@@ -1,6 +1,8 @@
-# PIR crate map
+# Crate map
 
 This repository’s product crate is **`private-inference-rent`** (`crate/`). Documentation for behavior is this AEP, not a second docs tree.
+
+Env prefix `PIR_*` is the **side-market allocate gate**. Cryptographic **private information retrieval** of bids/asks is a separate, upcoming dependency (Valar Group PIR). It is not this crate today.
 
 ## Package
 
@@ -54,6 +56,13 @@ Public instances for HOSTING_PAYMENT (one column, four rows, 128 bytes LE): merk
 | `provider/gateway/pir/` | Derived bearer |
 | `provider/cmd/pir-sidecar/` | Sidecar process |
 | `provider/Dockerfile.pir` | Lab image `akash-provider-pir:local` |
+
+## Upcoming: cryptographic PIR
+
+| Item | Intent |
+|---|---|
+| Valar-style PIR | Retrieve sealed bid / ask rows without revealing the index ([valar-ypir](https://crates.io/crates/valar-ypir), [vote-nullifier-pir](https://github.com/valargroup/vote-nullifier-pir)) |
+| Provider proxy | Untrusted third party hosts the index |
 
 ## Tests (normative list)
 
