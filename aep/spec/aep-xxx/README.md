@@ -421,6 +421,8 @@ flowchart TB
 
 **Why AKT inclusion.** Sealed bids must not drain demand from AKT. A ZK proof that the bidder holds a minimum stake keeps buy-and-hold pressure on AKT without putting the bonding account on the order book.
 
+**Why cryptographic PIR.** A sealed envelope still has to move. Whoever hosts the inbox sees who asked for which bid. PIR lets a renter fetch a row without the **provider proxy** learning the index, so that association graph is not a product of the market. Valar Group PIR is the retrieval design to follow.
+
 **Why Ironwood two-spend close, ZIP-32 named.** Product money is shielded Zcash, not uterp. Two spends (earned, remainder) match the lease split. ZIP-312 RedPallas is not implemented in Zakura; naming the ZIP-32 reconstructed-seed stand-in keeps the spend honest instead of claiming a RedPallas FROST spend that does not exist.
 
 **Alternatives rejected.**
