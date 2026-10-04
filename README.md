@@ -4,7 +4,7 @@ Privacy-first compute rent with an Akash-shaped market: public **deployment/ask*
 
 GitHub: https://github.com/permissionlessweb/rezerve
 
-**Documentation is the AEP:** [`aep/spec/aep-xxx/README.md`](aep/spec/aep-xxx/README.md). Field tables: [`aep/spec/aep-xxx/data-structures.md`](aep/spec/aep-xxx/data-structures.md). Crate and Halo2 map: [`aep/spec/aep-xxx/crate-map.md`](aep/spec/aep-xxx/crate-map.md).
+**Documentation is the AEP:** [`aep/spec/aep-xxx/README.md`](aep/spec/aep-xxx/README.md). Field tables: [`aep/spec/aep-xxx/data-structures.md`](aep/spec/aep-xxx/data-structures.md). Crate and Halo2 map: [`aep/spec/aep-xxx/crate-map.md`](aep/spec/aep-xxx/crate-map.md). zkAPI comparison: [`aep/spec/aep-xxx/oa-zkapi-gap.md`](aep/spec/aep-xxx/oa-zkapi-gap.md).
 
 ## Layout
 

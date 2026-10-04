@@ -530,6 +530,7 @@ Full table: [`crate-map.md`](crate-map.md).
 - Crate `private-inference-rent` (`crate/`), circuit `crate/circuits/hosting-payment`, contracts `crate/cw-commit`, `crate/cw-escrow`, `crate/cw-zap1-ibcv2`. Map: [`crate-map.md`](crate-map.md).
 - [YPIR](https://www.usenix.org/conference/usenixsecurity24/presentation/menon) (Menon, Wu, USENIX Security 2024) — single-server PIR with silent preprocessing.
 - [valar-ypir](https://crates.io/crates/valar-ypir) / [vote-nullifier-pir](https://github.com/valargroup/vote-nullifier-pir) / [spendability-pir](https://github.com/valargroup/spendability-pir) — Valar Group PIR to mirror for bid/ask retrieval.
+- [zkAPI (EF × OA)](https://blog.ethereum.org/2026/10/01/introducing-zkapi) — unlink payment from API use. Gap note: [`oa-zkapi-gap.md`](oa-zkapi-gap.md). Local sources: `crates/zkapi` (not this repo).
 
 ## Open questions, committee, and funding
 
