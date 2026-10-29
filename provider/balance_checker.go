@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"time"
 
@@ -67,6 +68,7 @@ type leaseCheckResponse struct {
 	checkAfter time.Duration
 	state      respState
 	err        error
+	closed     *mtypes.EventLeaseClosed
 }
 
 func newBalanceChecker(
@@ -80,7 +82,7 @@ func newBalanceChecker(
 	bc := &balanceChecker{
 		ctx:     ctx,
 		session: clientSession,
-		log:     clientSession.Log().With("cmp", "balance-checker"),
+		log:     clientSession.Log().With("module", "balance-checker"),
 		bus:     bus,
 		lc:      lifecycle.New(),
 		ownAddr: accAddr,
@@ -140,8 +142,30 @@ func (bc *balanceChecker) doEscrowCheck(ctx context.Context, lid mtypes.LeaseID,
 		return resp
 	}
 
+	// Reconcile this lease even if its closure event was missed or its
+	// persisted deployment was recovered after the lease closed.
+	lease, err := bc.aqc.Market().Lease(ctx, &mvbeta.QueryLeaseRequest{ID: lid})
+	if err != nil {
+		resp.err = err
+		return resp
+	}
+	if lease.Lease.ID != lid {
+		resp.err = fmt.Errorf("lease query returned a different ID: %s", lease.Lease.ID)
+		return resp
+	}
+	switch lease.Lease.State {
+	case mtypes.LeaseClosed, mtypes.LeaseInsufficientFunds:
+		resp.closed = &mtypes.EventLeaseClosed{ID: lid, Reason: lease.Lease.Reason}
+		return resp
+	case mtypes.LeaseActive, mtypes.LeaseReclaiming:
+		// Both states still consume escrow funds. A low-funds withdrawal
+		// lets the chain settle the account and decide whether to close it.
+	default:
+		resp.err = fmt.Errorf("unexpected lease state: %s", lease.Lease.State)
+		return resp
+	}
+
 	var dResp *dtypes.QueryDeploymentResponse
-	var lResp *mvbeta.QueryLeasesResponse
 
 	// Fetch the balance of the escrow account
 	dResp, resp.err = bc.aqc.Deployment().Deployment(ctx, &dtypes.QueryDeploymentRequest{
@@ -152,21 +176,23 @@ func (bc *balanceChecker) doEscrowCheck(ctx context.Context, lid mtypes.LeaseID,
 		return resp
 	}
 
-	lResp, resp.err = bc.aqc.Market().Leases(ctx, &mvbeta.QueryLeasesRequest{
-		Filters: mtypes.LeaseFilters{
-			Owner: lid.Owner,
-			DSeq:  lid.DSeq,
-			State: mtypes.LeaseActive.String(),
-		},
-	})
-
-	if resp.err != nil {
-		return resp
-	}
-
 	totalLeaseAmount := sdkmath.LegacyNewDec(0)
-	for _, lease := range lResp.Leases {
-		totalLeaseAmount = totalLeaseAmount.Add(lease.Lease.Price.Amount)
+	for _, state := range []mtypes.Lease_State{mtypes.LeaseActive, mtypes.LeaseReclaiming} {
+		var lResp *mvbeta.QueryLeasesResponse
+		lResp, resp.err = bc.aqc.Market().Leases(ctx, &mvbeta.QueryLeasesRequest{
+			Filters: mtypes.LeaseFilters{
+				Owner: lid.Owner,
+				DSeq:  lid.DSeq,
+				State: state.String(),
+			},
+		})
+		if resp.err != nil {
+			return resp
+		}
+
+		for _, lease := range lResp.Leases {
+			totalLeaseAmount = totalLeaseAmount.Add(lease.Lease.Price.Amount)
+		}
 	}
 
 	var balance sdkmath.LegacyDec
@@ -219,8 +245,8 @@ func (bc *balanceChecker) run(startCh chan<- error) {
 		bc.lc.ShutdownCompleted()
 
 		for _, lState := range bc.leases {
-			if lState.tm != nil && !lState.tm.Stop() {
-				<-lState.tm.C
+			if lState.tm != nil {
+				lState.tm.Stop()
 			}
 		}
 
@@ -235,6 +261,7 @@ func (bc *balanceChecker) run(startCh chan<- error) {
 	if err != nil {
 		return
 	}
+	defer subscriber.Close()
 
 	resultch = make(chan runner.Result, 1)
 
@@ -272,16 +299,7 @@ loop:
 					bc.runEscrowCheck(ctx, ev.LeaseID, false, leaseCheckCh)
 				}
 			case event.LeaseRemoveFundsMonitor:
-				lsState, exists := bc.leases[ev.LeaseID]
-				if !exists {
-					break
-				}
-
-				if lsState.tm != nil && !lsState.tm.Stop() {
-					<-lsState.tm.C
-				}
-
-				delete(bc.leases, ev.LeaseID)
+				bc.removeLease(ev.LeaseID)
 			}
 		case res := <-leaseCheckCh:
 			// we may have timer fired just a heart beat ahead of lease remove event.
@@ -290,16 +308,31 @@ loop:
 				continue loop
 			}
 
+			if res.closed != nil {
+				// Reuse the normal local teardown path. This does not send a
+				// transaction or change the on-chain lease.
+				res.err = bc.bus.Publish(res.closed)
+				if res.err == nil {
+					bc.removeLease(res.lid)
+					continue loop
+				}
+			}
+			if res.err != nil {
+				bc.log.Info("couldn't check lease balance. retrying in 1m", "lid", res.lid, "err", res.err)
+				lState.tm = bc.timerFunc(ctx, time.Minute, res.lid, res.state == respStateScheduledWithdraw, leaseCheckCh)
+				continue loop
+			}
+
 			withdraw := false
 
 			switch res.state {
 			case respStateOutOfFunds:
-				bc.log.Debug("lease is out of funds", "lease", res.lid)
+				bc.log.Debug("lease is out of funds", "lid", res.lid)
 				// reschedule funds check. if lease not being topped up then network will close it
 				fallthrough
 			case respStateScheduledWithdraw:
 				withdraw = true
-				bc.log.Debug("sending withdraw", "lease", res.lid)
+				bc.log.Debug("sending withdraw", "lid", res.lid)
 				// reschedule periodic withdraw if configured
 				if bc.cfg.WithdrawalPeriod > 0 {
 					lState.scheduledWithdrawAt = time.Now().Add(bc.cfg.WithdrawalPeriod)
@@ -310,10 +343,7 @@ loop:
 				timerPeriod := res.checkAfter
 				scheduledWithdraw := false
 
-				if res.err != nil {
-					bc.log.Info("couldn't check lease balance. retrying in 1m", "leaseId", res.lid, "err", res.err)
-					timerPeriod = time.Minute
-				} else if !withdraw && !lState.scheduledWithdrawAt.IsZero() {
+				if !withdraw && !lState.scheduledWithdrawAt.IsZero() {
 					withdrawIn := time.Until(lState.scheduledWithdrawAt)
 					if timerPeriod >= withdrawIn {
 						timerPeriod = withdrawIn
@@ -334,9 +364,19 @@ loop:
 			}
 		case res := <-resultch:
 			if err := res.Error(); err != nil {
-				bc.log.Error("failed to do lease withdrawal", "err", err, "LeaseID", res.Value().(mtypes.LeaseID))
+				bc.log.Error("failed to do lease withdrawal", "err", err, "lid", res.Value().(mtypes.LeaseID))
 			}
 		}
+	}
+}
+
+func (bc *balanceChecker) removeLease(lid mtypes.LeaseID) {
+	if state, exists := bc.leases[lid]; exists {
+		if state.tm != nil {
+			// AfterFunc timers have no channel to drain when already fired.
+			state.tm.Stop()
+		}
+		delete(bc.leases, lid)
 	}
 }
 

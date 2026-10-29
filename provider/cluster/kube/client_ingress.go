@@ -73,20 +73,43 @@ func kubeNginxIngressAnnotations(directive chostname.ConnectToDeploymentDirectiv
 	}
 
 	result[fmt.Sprintf("%s/proxy-next-upstream", root)] = strBuilder.String()
+
+	// Buffering is on by default, so only the explicit "off" needs an annotation.
+	if directive.ProxyBufferingDisable {
+		result[fmt.Sprintf("%s/proxy-buffering", root)] = "off"
+	}
+	// Emit only a buffer set nginx will accept; an inconsistent one would freeze the
+	// shared ingress config on reload. ProxyBuffersSize is NGF-only (no annotation here).
+	pb := directive.IngressProxyBuffers()
+	if pb.BufferSize > 0 {
+		result[fmt.Sprintf("%s/proxy-buffer-size", root)] = strconv.Itoa(int(pb.BufferSize))
+	}
+	if pb.Number > 0 {
+		result[fmt.Sprintf("%s/proxy-buffers-number", root)] = strconv.Itoa(int(pb.Number))
+	}
+	if pb.BusySize > 0 {
+		result[fmt.Sprintf("%s/proxy-busy-buffers-size", root)] = strconv.Itoa(int(pb.BusySize))
+	}
+	if directive.ProxyConnectTimeout > 0 {
+		result[fmt.Sprintf("%s/proxy-connect-timeout", root)] = fmt.Sprintf("%d", int(math.Ceil(float64(directive.ProxyConnectTimeout)/1000.0)))
+	}
+
 	return result
 }
 
 func (c *client) ConnectHostnameToDeployment(ctx context.Context, directive chostname.ConnectToDeploymentDirective) error {
-	c.log.Info("connecting hostname to deployment",
+	log := c.log.With("lid", directive.LeaseID)
+
+	log.Info("connecting hostname to deployment",
 		"hostname", directive.Hostname,
-		"ingress-mode", c.ingressMode)
+		"ingress_mode", c.ingressMode)
 
 	if c.ingressMode == builder.IngressModeGateway {
-		c.log.Info("using Gateway API mode for hostname connection")
+		log.Info("using Gateway API mode for hostname connection")
 		return c.connectHostnameToDeploymentGateway(ctx, directive)
 	}
 
-	c.log.Info("using NGINX Ingress mode for hostname connection")
+	log.Info("using NGINX Ingress mode for hostname connection")
 	ingressName := directive.Hostname
 	ns := builder.LidNS(directive.LeaseID)
 	rules := ingressRules(directive.Hostname, directive.ServiceName, directive.ServicePort)

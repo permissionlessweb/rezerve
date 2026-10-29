@@ -8,8 +8,10 @@ import (
 )
 
 // LeaseRec is one deployment the private market opened for a derived bearer.
+// Session is an optional extra credential. The lease bearer still admits.
 type LeaseRec struct {
 	Bearer    string `json:"bearer"`
+	Session   string `json:"session,omitempty"`
 	Open      bool   `json:"open"`
 	Container string `json:"container,omitempty"`
 	HostPort  int    `json:"host_port,omitempty"`
@@ -71,6 +73,20 @@ func AcceptBid(leaseID, bearer string) error {
 	return saveBook(m)
 }
 
+// OpenSession adds a session bearer without removing the lease bearer.
+func OpenSession(leaseID, sessionBearer string) error {
+	bookMu.Lock()
+	defer bookMu.Unlock()
+	m := loadBook()
+	rec, ok := m[leaseID]
+	if !ok || !rec.Open {
+		return os.ErrNotExist
+	}
+	rec.Session = stringsLower(sessionBearer)
+	m[leaseID] = rec
+	return saveBook(m)
+}
+
 // CloseLease denies later access for that lease (access kill, not escrow).
 func CloseLease(leaseID string) error {
 	bookMu.Lock()
@@ -78,6 +94,7 @@ func CloseLease(leaseID string) error {
 	m := loadBook()
 	if rec, ok := m[leaseID]; ok {
 		rec.Open = false
+		rec.Session = ""
 		m[leaseID] = rec
 	}
 	return saveBook(m)
@@ -95,10 +112,11 @@ func AccessLease(leaseID, bearer string) string {
 	if !rec.Open {
 		return "closed"
 	}
-	if rec.Bearer != stringsLower(bearer) {
-		return "unauthorized"
+	b := stringsLower(bearer)
+	if rec.Bearer == b || (rec.Session != "" && rec.Session == b) {
+		return "ok"
 	}
-	return "ok"
+	return "unauthorized"
 }
 
 func openBearers() map[string]struct{} {
@@ -109,6 +127,9 @@ func openBearers() map[string]struct{} {
 	for _, rec := range m {
 		if rec.Open && len(rec.Bearer) == 64 {
 			out[rec.Bearer] = struct{}{}
+		}
+		if rec.Open && len(rec.Session) == 64 {
+			out[rec.Session] = struct{}{}
 		}
 	}
 	return out

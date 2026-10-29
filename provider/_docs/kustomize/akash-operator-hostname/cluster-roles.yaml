@@ -34,12 +34,36 @@ rules:
       - deletecollection
       - watch
   - apiGroups:
+      - gateway.nginx.org
+    resources:
+      - snippetsfilters
+    verbs:
+      - get
+      - list
+      - create
+      - update
+      - delete
+      - deletecollection
+      - watch
+  - apiGroups:
       - gateway.networking.k8s.io
     resources:
       - gateways
     verbs:
       - get
       - list
+      - watch
+  - apiGroups:
+      - gateway.nginx.org
+    resources:
+      - snippetsfilters
+    verbs:
+      - get
+      - list
+      - create
+      - update
+      - delete
+      - deletecollection
       - watch
   - apiGroups:
       - ""

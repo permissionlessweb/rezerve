@@ -24,6 +24,7 @@ func Command() *cobra.Command {
 	}
 	cmd.AddCommand(pirCheckCmd())
 	cmd.AddCommand(pirAcceptCmd())
+	cmd.AddCommand(pirSessionCmd())
 	cmd.AddCommand(pirCloseCmd())
 	cmd.AddCommand(pirAccessCmd())
 	cmd.AddCommand(pirServeCmd())
@@ -66,6 +67,23 @@ func pirAcceptCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&lease, "lease", "", "lease id")
 	c.Flags().StringVar(&bearer, "bearer", "", "64-hex derived bearer")
+	return c
+}
+
+func pirSessionCmd() *cobra.Command {
+	var lease, bearer string
+	c := &cobra.Command{
+		Use:   "session",
+		Short: "Add a session bearer; the lease bearer still admits",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if lease == "" || bearer == "" {
+				return fmt.Errorf("need --lease and --bearer")
+			}
+			return pir.OpenSession(lease, bearer)
+		},
+	}
+	c.Flags().StringVar(&lease, "lease", "", "lease id")
+	c.Flags().StringVar(&bearer, "bearer", "", "64-hex session bearer")
 	return c
 }
 

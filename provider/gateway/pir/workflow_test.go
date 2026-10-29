@@ -28,6 +28,18 @@ func TestMarketWorkflowAcceptAccessClose(t *testing.T) {
 	if AccessLease("lease-1", winner) != "ok" {
 		t.Fatal("winner must access after accept")
 	}
+	var nonce [32]byte
+	nonce[0] = 9
+	sessionBearer := SessionBearerHex("ask-1", session, bid, nonce)
+	if err := OpenSession("lease-1", sessionBearer); err != nil {
+		t.Fatal(err)
+	}
+	if AccessLease("lease-1", sessionBearer) != "ok" {
+		t.Fatal("session bearer must access")
+	}
+	if AccessLease("lease-1", winner) != "ok" {
+		t.Fatal("lease bearer must still access")
+	}
 	if !AcceptBearer(winner) {
 		t.Fatal("gateway must honor open lease bearer")
 	}

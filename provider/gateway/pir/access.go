@@ -13,8 +13,10 @@ import (
 )
 
 const (
-	tagBearer = "pir-access-bearer-v1"
-	tagSecret = "pir-access-v1"
+	tagBearer        = "pir-access-bearer-v1"
+	tagSecret        = "pir-access-v1"
+	tagSession       = "pir-access-session-v1"
+	tagSessionBearer = "pir-access-session-bearer-v1"
 )
 
 var (
@@ -45,6 +47,14 @@ func SecretFromSession(askID string, sessionKey, bidCommitment [32]byte) [32]byt
 // BearerHex matches Rust DerivedAccess::bearer_hex.
 func BearerHex(secret [32]byte) string {
 	b := taggedHash(tagBearer, secret[:])
+	return hex.EncodeToString(b[:])
+}
+
+// SessionBearerHex matches Rust SessionAccess::derive bearer.
+// The lease bearer from SecretFromSession stays valid.
+func SessionBearerHex(askID string, oobKey, note, nonce [32]byte) string {
+	secret := taggedHash(tagSession, oobKey[:], note[:], []byte(askID), nonce[:])
+	b := taggedHash(tagSessionBearer, secret[:])
 	return hex.EncodeToString(b[:])
 }
 
