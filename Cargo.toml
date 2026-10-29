@@ -8,12 +8,17 @@
 
 [workspace]
 resolver = "2"
-# private-inference-rent (crate/) stays excluded. crates.io zcash_transparent 0.10
-# pins bip32 0.6.0-pre.1 -> sha2 =0.11.0-pre.4, which cannot unify with
-# wasmer-types sha2 ^0.11 pulled by cw-orch-core default feature zk (zk-cosmwasm).
-# live-chain is excluded (ict-rs paths). Not a second Halo2 tree.
+# private-inference-rent (crate/) is a member. Unblocked by cw-orch-core
+# default feature zk = off (patched checkout packages/cw-orch-core).
+# That feature pulls zk-cosmwasm -> wasmer-types sha2 ^0.11, which cannot
+# unify with bip32 0.6.0-pre.1 sha2 =0.11.0-pre.4 (zcash_transparent 0.10
+# and zcash_script 0.4). cw-orch feature zk still opts in. A sha2 0.11
+# upgrade of bip32 is not viable: zcash_primitives 0.30 pins
+# crypto-common =0.2.0-rc.1. live-chain stays excluded. Not a second Halo2
+# tree. halo2_proofs stays zakura-halo2-proofs 5.0.0, feature batch only.
 
 members = [
+    "crate",
     "crate/circuits/hosting-payment",
     "crate/cw-commit",
     "crate/cw-escrow",
@@ -21,7 +26,6 @@ members = [
     "crate/interface",
 ]
 exclude = [
-    "crate",
     "crate/live-chain",
 ]
 
