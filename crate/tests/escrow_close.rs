@@ -244,6 +244,71 @@ fn escrow_settle_is_atomic_both_intents_or_neither() {
 }
 
 #[test]
+fn close_challenge_stall_does_not_pay_provider_invented_earned() {
+    use private_inference_rent::frost_dkg::dkg_three_party;
+    use private_inference_rent::zcash_escrow::{
+        record_frost_close_stall, ShieldedNote, ZcashEscrowError,
+    };
+
+    let group = dkg_three_party().expect("dkg");
+    assert!(!group.is_dealer(), "stall record is DKG custody, not a dealer");
+    let seats = group.seats();
+    assert_eq!(group.min_signers, 2);
+    let note = ShieldedNote {
+        group_id: group.verifying_key,
+        commitment: tagged_hash(b"close-challenge", &[b"opened-note"]),
+        amount_zat: 100,
+        tip: "lab".into(),
+        z_addr: String::new(),
+        txid: String::new(),
+        ironwood_note: Vec::new(),
+    };
+    let invented = 99_999u64;
+    let stalled = record_frost_close_stall(&group, &seats[..1], &note, 10, 50, 1)
+        .expect("renter records the stall");
+    assert_eq!(stalled.signers_have(), 1);
+    assert_eq!(stalled.signers_need(), 2);
+    assert_ne!(stalled.record_id(), [0u8; 32]);
+    assert_eq!(stalled.note_commitment(), note.commitment);
+    assert_eq!(
+        stalled.height_earned_quote(),
+        40,
+        "quote is f(open_height, recorded_height, rate), not a closer integer"
+    );
+    assert_ne!(stalled.height_earned_quote(), invented);
+    assert_eq!(stalled.provider_paid_zat(), 0);
+    let (earned, remainder) = stalled.finish_amounts(note.amount_zat).unwrap();
+    assert_eq!(earned, 40);
+    assert_eq!(remainder, 60);
+
+    let invented_err = stalled.try_pay_provider(invented).unwrap_err();
+    assert_eq!(invented_err, ZcashEscrowError::CloserSetEarned);
+    assert_eq!(
+        stalled.provider_paid_zat(),
+        0,
+        "stall must not pay the provider an invented amount"
+    );
+
+    let quote_err = stalled
+        .try_pay_provider(stalled.height_earned_quote())
+        .unwrap_err();
+    assert_eq!(
+        quote_err,
+        ZcashEscrowError::FrostCloseStalled { have: 1, need: 2 }
+    );
+    assert_eq!(stalled.provider_paid_zat(), 0);
+
+    let again = record_frost_close_stall(&group, &seats[..1], &note, 10, 50, 1).unwrap();
+    assert_eq!(again.record_id(), stalled.record_id());
+
+    let not_stall = record_frost_close_stall(&group, &seats[..2], &note, 10, 50, 1);
+    assert_eq!(
+        not_stall.unwrap_err(),
+        ZcashEscrowError::CloseNotStalled { have: 2, need: 2 }
+    );
+}
+
+#[test]
 fn escrow_replay_deny_on_both_payout_spends() {
     let bid_c = bid();
     let (mut pool, frost, holders) = funded_pool(100, bid_c);

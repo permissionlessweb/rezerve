@@ -57,6 +57,17 @@ pub enum ZcashEscrowError {
     RpcMissing,
     #[error("node refused note open/spend: {0}")]
     NoteOp(String),
+    /// Closer named an earned integer. Stall and close both refuse it.
+    #[error("close challenge: closer must not set earned")]
+    CloserSetEarned,
+    /// Seats present already meet `t`. This record is only for a stalled close.
+    #[error("close challenge: FROST is not stalled (have {have}, need {need})")]
+    CloseNotStalled { have: u16, need: u16 },
+    /// Fewer than `t` seats. Do not spend and do not pay the provider.
+    #[error(
+        "FROST close stalled (have {have}, need {need}); record a challenge, do not pay earned"
+    )]
+    FrostCloseStalled { have: u16, need: u16 },
 }
 
 pub fn lab_required() -> bool {
@@ -209,6 +220,168 @@ impl ShieldedNote {
         let _ = _opened;
         IRONWOOD_SPEND_STAND_IN
     }
+}
+
+/// Renter record when FROST close cannot reach `t`. Not a spend, not a viewing
+/// key, and not a closer-chosen earned amount. `provider_paid_zat` is 0.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloseChallenge {
+    record_id: [u8; 32],
+    note_commitment: [u8; 32],
+    open_height: u64,
+    recorded_height: u64,
+    rate_zat_per_height: u64,
+    /// `f(open_height, recorded_height, rate)`. Informational. Not paid here.
+    height_earned_quote: u64,
+    signers_have: u16,
+    signers_need: u16,
+}
+
+impl CloseChallenge {
+    pub fn record_id(&self) -> [u8; 32] {
+        self.record_id
+    }
+
+    pub fn note_commitment(&self) -> [u8; 32] {
+        self.note_commitment
+    }
+
+    pub fn open_height(&self) -> u64 {
+        self.open_height
+    }
+
+    pub fn recorded_height(&self) -> u64 {
+        self.recorded_height
+    }
+
+    pub fn rate_zat_per_height(&self) -> u64 {
+        self.rate_zat_per_height
+    }
+
+    pub fn height_earned_quote(&self) -> u64 {
+        self.height_earned_quote
+    }
+
+    pub fn signers_have(&self) -> u16 {
+        self.signers_have
+    }
+
+    pub fn signers_need(&self) -> u16 {
+        self.signers_need
+    }
+
+    /// Stall settlement pays nothing. The field is not stored, so a closer
+    /// cannot write it.
+    pub fn provider_paid_zat(&self) -> u64 {
+        0
+    }
+
+    /// Apply `claimed_earned_zat` while this challenge stands.
+    ///
+    /// A value other than `f(open, recorded, rate)` is [`ZcashEscrowError::CloserSetEarned`].
+    /// The height quote itself is also unpaid until a later threshold
+    /// `close_notes`, which does not read this record.
+    pub fn try_pay_provider(&self, claimed_earned_zat: u64) -> Result<u64, ZcashEscrowError> {
+        if claimed_earned_zat != self.height_earned_quote {
+            return Err(ZcashEscrowError::CloserSetEarned);
+        }
+        if self.signers_have < self.signers_need {
+            return Err(ZcashEscrowError::FrostCloseStalled {
+                have: self.signers_have,
+                need: self.signers_need,
+            });
+        }
+        Err(ZcashEscrowError::NoteOp(
+            "close challenge: threshold close is close_notes, not this record".into(),
+        ))
+    }
+
+    /// Amounts a later threshold `close_notes_from_challenge` will use.
+    /// Earned is the height quote. Remainder is deposit minus that quote.
+    pub fn finish_amounts(&self, deposit_zat: u64) -> Result<(u64, u64), ZcashEscrowError> {
+        let earned = crate::accrual::f(
+            self.open_height,
+            self.recorded_height,
+            crate::accrual::AccrualRate {
+                zat_per_height: self.rate_zat_per_height,
+            },
+        )
+        .map_err(|e| ZcashEscrowError::NoteOp(format!("close challenge: {e}")))?;
+        if earned != self.height_earned_quote {
+            return Err(ZcashEscrowError::CloserSetEarned);
+        }
+        let remainder = deposit_zat
+            .checked_sub(earned)
+            .ok_or_else(|| ZcashEscrowError::NoteOp("earned > deposit".into()))?;
+        Ok((earned, remainder))
+    }
+}
+
+/// Record a stalled FROST close for the renter. Does not spend the note and
+/// does not take an earned integer. The height quote is `accrual::f` only.
+pub fn record_frost_close_stall(
+    group: &FrostGroup,
+    seats_present: &[FrostSeat],
+    note: &ShieldedNote,
+    open_height: u64,
+    recorded_height: u64,
+    rate_zat_per_height: u64,
+) -> Result<CloseChallenge, ZcashEscrowError> {
+    if group.is_dealer() {
+        return Err(ZcashEscrowError::NoteOp(
+            "close challenge: dealer FROST is not product custody".into(),
+        ));
+    }
+    if note.group_id != group.verifying_key {
+        return Err(ZcashEscrowError::NoteOp(
+            "close challenge: note spend authority is a different DKG group".into(),
+        ));
+    }
+    if note.commitment == [0u8; 32] {
+        return Err(ZcashEscrowError::NoteOp(
+            "close challenge: opened note commitment missing".into(),
+        ));
+    }
+    let have = u16::try_from(seats_present.len()).unwrap_or(u16::MAX);
+    let need = group.min_signers;
+    if have >= need {
+        return Err(ZcashEscrowError::CloseNotStalled { have, need });
+    }
+    let height_earned_quote = crate::accrual::f(
+        open_height,
+        recorded_height,
+        crate::accrual::AccrualRate {
+            zat_per_height: rate_zat_per_height,
+        },
+    )
+    .map_err(|e| ZcashEscrowError::NoteOp(format!("close challenge: {e}")))?;
+    if height_earned_quote > note.amount_zat {
+        return Err(ZcashEscrowError::NoteOp(
+            "close challenge: height quote exceeds deposit; stall pays nothing".into(),
+        ));
+    }
+    let record_id = tagged_hash(
+        b"close-challenge-v1",
+        &[
+            &note.commitment,
+            &note.group_id,
+            &open_height.to_le_bytes(),
+            &recorded_height.to_le_bytes(),
+            &rate_zat_per_height.to_le_bytes(),
+            &have.to_le_bytes(),
+            &need.to_le_bytes(),
+        ],
+    );
+    Ok(CloseChallenge {
+        record_id,
+        note_commitment: note.commitment,
+        open_height,
+        recorded_height,
+        rate_zat_per_height,
+        height_earned_quote,
+        signers_have: have,
+        signers_need: need,
+    })
 }
 
 pub struct ZcashEscrow {
@@ -459,10 +632,55 @@ impl ZcashEscrow {
         note: &ShieldedNote,
         earned_zat: u64,
     ) -> Result<(SpendResult, SpendResult), ZcashEscrowError> {
-        let _rem = note
-            .amount_zat
-            .checked_sub(earned_zat)
-            .ok_or_else(|| ZcashEscrowError::NoteOp("earned > deposit".into()))?;
+        self.close_notes_amounts(group, seats, note, earned_zat)
+    }
+
+    /// Finish a stalled close using only the height quote on `challenge`.
+    /// The caller does not pass earned. Below threshold this returns
+    /// [`ZcashEscrowError::FrostCloseStalled`] and does not spend.
+    pub fn close_notes_from_challenge(
+        &self,
+        group: &FrostGroup,
+        seats: &[FrostSeat],
+        note: &ShieldedNote,
+        challenge: &CloseChallenge,
+    ) -> Result<(SpendResult, SpendResult), ZcashEscrowError> {
+        if challenge.note_commitment != note.commitment {
+            return Err(ZcashEscrowError::NoteOp(
+                "close challenge: note commitment mismatch".into(),
+            ));
+        }
+        let earned = crate::accrual::f(
+            challenge.open_height,
+            challenge.recorded_height,
+            crate::accrual::AccrualRate {
+                zat_per_height: challenge.rate_zat_per_height,
+            },
+        )
+        .map_err(|e| ZcashEscrowError::NoteOp(format!("close challenge: {e}")))?;
+        if earned != challenge.height_earned_quote {
+            return Err(ZcashEscrowError::CloserSetEarned);
+        }
+        self.close_notes_amounts(group, seats, note, earned)
+    }
+
+    fn close_notes_amounts(
+        &self,
+        group: &FrostGroup,
+        seats: &[FrostSeat],
+        note: &ShieldedNote,
+        earned_zat: u64,
+    ) -> Result<(SpendResult, SpendResult), ZcashEscrowError> {
+        let have = u16::try_from(seats.len()).unwrap_or(u16::MAX);
+        if have < group.min_signers {
+            return Err(ZcashEscrowError::FrostCloseStalled {
+                have,
+                need: group.min_signers,
+            });
+        }
+        if note.amount_zat < earned_zat {
+            return Err(ZcashEscrowError::NoteOp("earned > deposit".into()));
+        }
         let opened_nf = dkg_opened_nullifier(seats, note)?;
         // First add_ironwood_spend: THAT opened note → provider earned + DKG remainder.
         let pay = self.spend_note(group, seats, note, b"provider", earned_zat)?;

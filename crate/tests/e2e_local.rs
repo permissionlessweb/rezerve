@@ -121,6 +121,14 @@ fn production_sequence_ask_oob_bid_zap1_halo2_dkg_allocate_serve_close_grant_two
     assert_ne!(r.earned_txid, r.remainder_txid);
     assert!(r.close_height > r.open_height, "f() needs a height window");
     assert!(r.earned_zat > 0, "earned is f(open,close,rate), not a closer 0");
+    assert!(r.bench.inclusion_prove_us > 0, "inclusion prove time");
+    assert!(r.bench.inclusion_verify_us > 0, "inclusion verify time");
+    assert!(r.bench.stored_vk_verify_us > 0, "stored vk verify time");
+    assert!(r.bench.accrual_prove_us > 0, "accrual prove time");
+    assert!(r.bench.accrual_verify_us > 0, "accrual verify time");
+    assert!(r.bench.chain_gas_used > 0, "chain gas_used");
+    assert!(r.bench.chain_tx_count > 0, "chain tx count");
+    assert!(r.bench.inclusion_prove_includes_keygen);
     assert_eq!(
         r.earned_zat,
         private_inference_rent::accrual::f(
@@ -135,13 +143,21 @@ fn production_sequence_ask_oob_bid_zap1_halo2_dkg_allocate_serve_close_grant_two
     );
     let e2e_src = include_str!("../src/e2e.rs");
     assert!(
-        e2e_src.contains("accrue_from_zakura_halo2")
+        e2e_src.contains("prove_accrual_halo2")
             && e2e_src.contains("verify_product_accrual")
             && e2e_src.contains("accept_on_zap1_client")
             && e2e_src.contains("open_note")
             && e2e_src.contains("PIR_KEEP_CHAIN")
             && e2e_src.contains("query_live_commit_match")
             && e2e_src.contains("LIVE_CW_PIR_COMMIT_MATCH_OK")
+            && e2e_src.contains("fetch_row")
+            && e2e_src.contains("two-proxy XOR")
+            && e2e_src.contains("not YPIR")
+            && e2e_src.contains("PROOF_LIVE")
+            && e2e_src.contains("finish_amounts")
+            && e2e_src.contains("close_notes_from_challenge")
+            && e2e_src.contains("CloserSetEarned")
+            && e2e_src.contains("winner_bearer_denied")
             && !e2e_src.contains("let mut view = crate::OnChainView::new(ask.clone())")
             && !e2e_src.contains("match-serve")
             && !e2e_src.contains("close_notes(&frost, &frost_seats[..2], &opened, 40)")
@@ -170,4 +186,41 @@ fn production_sequence_ask_oob_bid_zap1_halo2_dkg_allocate_serve_close_grant_two
         err.contains("live-ict"),
         "production sequence without live-ict must fail closed: {err}"
     );
+}
+
+/// Source lock: the compose names two-proxy XOR, a non-live AKT inclusion, and
+/// `finish_amounts`. A single proxy answer, a fake AKT proof, or a closer-set
+/// earned amount is not this sequence. The lease bearer step stays.
+#[test]
+fn production_sequence_lists_bid_pir_akt_stake_and_stall_close() {
+    for name in [
+        "bid_ask_pir_two_proxy_xor",
+        "akt_min_stake_inclusion",
+        "frost_close_stall_finish_amounts",
+        "winner_bearer_denied",
+    ] {
+        assert!(
+            PRODUCTION_SEQUENCE.contains(&name),
+            "production sequence missing {name}"
+        );
+    }
+    let src = include_str!("../src/e2e.rs");
+    assert!(src.contains("fetch_row"));
+    assert!(src.contains("bid_pir_retrieval=two-proxy-xor not_ypir=true"));
+    assert!(src.contains("It is not YPIR") || src.contains("not YPIR"));
+    assert!(src.contains("PROOF_LIVE"));
+    assert!(src.contains("proof_live=false"));
+    assert!(src.contains("finish_amounts"));
+    assert!(src.contains("close_notes_from_challenge"));
+    assert!(src.contains("CloserSetEarned"));
+    assert!(src.contains("FrostCloseStalled"));
+    assert!(src.contains("from_session"));
+    assert!(src.contains("no BankMsg/uterp"));
+    assert!(!src.contains("BankMsg::Send"));
+    let pir = include_str!("../src/bid_ask_pir.rs");
+    assert!(pir.contains("It is not YPIR"));
+    assert!(!pir.contains("this is YPIR"));
+    let akt = include_str!("../src/akt_stake.rs");
+    assert!(akt.contains("PROOF_LIVE: bool = false"));
+    assert!(akt.contains("not an Akash mainnet snapshot"));
 }

@@ -6,9 +6,11 @@
 //! `zakura_attach` required and fail-closed. No skip-green.
 //!
 //! Product compose is [`run_production_sequence`]: ask → ChaCha OOB bid /
-//! chain commitments → ZAP1+Halo2 DKG credit → allocate after match →
-//! pir serve HTTP 200 → LC-class close grant → two Ironwood spends →
-//! winner bearer denied. Fail-closed if any step is skipped.
+//! chain commitments → two-proxy XOR bid PIR (not YPIR) → AKT min-stake
+//! inclusion (proof stays off) → ZAP1+Halo2 DKG credit → allocate after
+//! match → pir serve HTTP 200 → LC-class close grant → stalled FROST close
+//! via `finish_amounts` → two Ironwood spends → winner bearer denied.
+//! Fail-closed if any step is skipped. The lease bearer stays.
 
 use crate::ask::{PublicAsk, ResourceAsk};
 use crate::bid::{EncryptedBidEnvelope, PlaintextBid};
@@ -622,11 +624,16 @@ pub fn run_rent_rounds(rounds: u32) -> Result<Vec<RentRound>, String> {
         let loser = crate::DerivedAccess::from_session(&ask_id, &loser_key, &bid_c);
         let lease_id = format!("lease-{n}");
         leases.accept_bid(&lease_id, winner.bearer_hex());
-        let winner_accessed = leases.access(&lease_id, &winner.bearer_hex()).is_ok();
+        let nonce = [n as u8; 32];
+        let session = crate::access::SessionAccess::derive(&ask_id, &key, &bid_c, &nonce);
+        leases
+            .open_session(&lease_id, bid_c, session.bearer_hex())
+            .map_err(|e| format!("{e:?}"))?;
+        let winner_accessed = leases.access(&lease_id, &session.bearer_hex()).is_ok();
         let loser_denied = leases.access(&lease_id, &loser.bearer_hex())
             == Err(crate::LeaseAccessError::Unauthorized);
         leases.close(&lease_id).map_err(|e| format!("{e:?}"))?;
-        let closed_denied = leases.access(&lease_id, &winner.bearer_hex())
+        let closed_denied = leases.access(&lease_id, &session.bearer_hex())
             == Err(crate::LeaseAccessError::Closed);
         if !winner_accessed || !loser_denied || !closed_denied {
             return Err(format!(
@@ -775,12 +782,16 @@ pub fn run_escrow_partial_close() -> Result<EscrowPartialReport, String> {
     let winner = DerivedAccess::from_session("ask-partial", &key, &bid_c);
     let mut leases = LeaseBook::new();
     leases.accept_bid("lease-partial", winner.bearer_hex());
+    let session = crate::access::SessionAccess::derive("ask-partial", &key, &bid_c, &[4u8; 32]);
+    leases
+        .open_session("lease-partial", bid_c, session.bearer_hex())
+        .map_err(|e| format!("{e:?}"))?;
     let winner_accessed = leases
-        .access("lease-partial", &winner.bearer_hex())
+        .access("lease-partial", &session.bearer_hex())
         .is_ok();
     cell.close(EscrowParty::Tenant, &mut leases, "lease-partial", None)
         .map_err(|e| e.to_string())?;
-    let closed_denied = leases.access("lease-partial", &winner.bearer_hex())
+    let closed_denied = leases.access("lease-partial", &session.bearer_hex())
         == Err(crate::LeaseAccessError::Closed);
 
     let mut book = SettlementBook::new();
@@ -863,13 +874,18 @@ fn lease_winner_close_denied() -> Result<(bool, bool), String> {
     let winner = DerivedAccess::from_session("ask-ict-arbiter", &key, &bid_c);
     let mut leases = LeaseBook::new();
     leases.accept_bid("lease-ict-arbiter", winner.bearer_hex());
+    let session =
+        crate::access::SessionAccess::derive("ask-ict-arbiter", &key, &bid_c, &[5u8; 32]);
+    leases
+        .open_session("lease-ict-arbiter", bid_c, session.bearer_hex())
+        .map_err(|e| format!("{e:?}"))?;
     let winner_accessed = leases
-        .access("lease-ict-arbiter", &winner.bearer_hex())
+        .access("lease-ict-arbiter", &session.bearer_hex())
         .is_ok();
     leases
         .close("lease-ict-arbiter")
         .map_err(|e| format!("{e:?}"))?;
-    let closed_denied = leases.access("lease-ict-arbiter", &winner.bearer_hex())
+    let closed_denied = leases.access("lease-ict-arbiter", &session.bearer_hex())
         == Err(crate::LeaseAccessError::Closed);
     Ok((winner_accessed, closed_denied))
 }
@@ -883,7 +899,7 @@ fn zcash_two_spends() -> Result<(), String> {
         .open_note(&fg, &seats[..2], 100, "arbiter")
         .map_err(|e| format!("composed arbiter: zcash open: {e}"))?;
     let open_h = snapshot_open_height(&z)?;
-    let acc = ironwood_accrual_from_zakura(&z, open_h, 100, b"arbiter-zcash")?;
+    let (acc, _) = ironwood_accrual_from_zakura(&z, open_h, 100, b"arbiter-zcash")?;
     let (pay, refund) = z
         .close_notes(&fg, &seats[..2], &note, acc.earned_zat)
         .map_err(|e| format!("composed arbiter: z_frostspend: {e}"))?;
@@ -1026,7 +1042,7 @@ fn composed_arbiter_mock(
                 source_client: bundle.ibc.source_client.clone(),
                 dest_client: bundle.ibc.dest_client.clone(),
             },
-            Some(&[]),
+            &[],
         )
         .map_err(|e| format!("composed arbiter: ics08 create_client: {e}"))?;
     let proof: Vec<Ics08ProofStepMsg> = bundle
@@ -1055,7 +1071,7 @@ fn composed_arbiter_mock(
                 wallet_or_serial: bundle.wallet_or_serial.clone(),
                 proof,
             },
-            Some(&[]),
+            &[],
         )
         .map_err(|e| format!("composed arbiter: ics08 attest_packet: {e}"))?;
     let acc: Ics08AcceptedResp = suite
@@ -1125,7 +1141,7 @@ fn ironwood_accrual_from_zakura(
     open_height: u64,
     deposit: u64,
     blind_tag: &[u8],
-) -> Result<ProvenAccrual, String> {
+) -> Result<(ProvenAccrual, crate::e2e_bench::AccrualTimes), String> {
     let rt = z.regtest();
     z.generate(1)
         .map_err(|e| format!("generate close-height block: {e}"))?;
@@ -1153,16 +1169,16 @@ fn ironwood_accrual_from_zakura(
         ));
     }
     let blinding = tagged_hash(b"pir-accrual-blind", &[blind_tag]);
-    let (wit, pubv, proof) = crate::accrual::accrue_from_zakura_halo2(
-        &rt,
-        open_height,
-        close_height,
-        rate,
-        blinding,
-    )
-    .map_err(|e| format!("accrue_from_zakura_halo2: {e}"))?;
+    let (wit, pubv) = crate::accrual::accrue_from_zakura(&rt, open_height, close_height, rate, blinding)
+        .map_err(|e| format!("accrue_from_zakura: {e}"))?;
+    let prove_at = std::time::Instant::now();
+    let proof = crate::accrual::prove_accrual_halo2(&wit, &pubv)
+        .map_err(|e| format!("prove_accrual_halo2: {e}"))?;
+    let prove_us = crate::e2e_bench::elapsed_us(prove_at);
+    let verify_at = std::time::Instant::now();
     crate::accrual::verify_product_accrual(&wit, &pubv, &proof)
         .map_err(|e| format!("verify_product_accrual: {e}"))?;
+    let verify_us = crate::e2e_bench::elapsed_us(verify_at);
     if wit.earned_zat != expect {
         return Err(format!(
             "witness earned {} != f({open_height},{close_height},1)={expect}",
@@ -1176,13 +1192,16 @@ fn ironwood_accrual_from_zakura(
         "halo2_accrual_ok earned_zat={} open_height={} close_height={} rate=1",
         wit.earned_zat, open_height, close_height
     );
-    Ok(ProvenAccrual {
-        earned_zat: wit.earned_zat,
-        open_height,
-        close_height,
-        public: pubv,
-        proof,
-    })
+    Ok((
+        ProvenAccrual {
+            earned_zat: wit.earned_zat,
+            open_height,
+            close_height,
+            public: pubv,
+            proof,
+        },
+        crate::e2e_bench::AccrualTimes { prove_us, verify_us },
+    ))
 }
 
 /// Production marketplace sequence. Fail-closed if any step is skipped.
@@ -1190,10 +1209,13 @@ fn ironwood_accrual_from_zakura(
 pub const PRODUCTION_SEQUENCE: &[&str] = &[
     "public_sdl_ask",
     "chacha_oob_bid_commit_match",
+    "bid_ask_pir_two_proxy_xor",
+    "akt_min_stake_inclusion",
     "zap1_halo2_dkg_credit",
     "provider_allocate_after_commit_match",
     "pir_serve_http_200",
     "close_grant_lc_attrs",
+    "frost_close_stall_finish_amounts",
     "two_ironwood_spends",
     "winner_bearer_denied",
 ];
@@ -1212,6 +1234,7 @@ pub struct ProductionSequenceReport {
     pub earned_zat: u64,
     pub open_height: u64,
     pub close_height: u64,
+    pub bench: crate::e2e_bench::E2eBench,
 }
 
 pub fn run_production_sequence() -> Result<ProductionSequenceReport, String> {
@@ -1281,6 +1304,20 @@ fn production_sequence_live() -> Result<ProductionSequenceReport, String> {
     if !crate::zcash_escrow::lab_required() {
         return Err("production sequence: Zakura lab required".into());
     }
+    let mut bench = crate::e2e_bench::E2eBench::blank();
+    let stored_at = std::time::Instant::now();
+    let stored_ok = hosting_payment::proof_instance_verify(
+        1,
+        &std::fs::read(std::env::var("PIR_HALO2_PROOF").map_err(|e| e.to_string())?)
+            .map_err(|e| format!("read stored proof: {e}"))?,
+        &std::fs::read(std::env::var("PIR_HALO2_INSTANCES").map_err(|e| e.to_string())?)
+            .map_err(|e| format!("read stored instances: {e}"))?,
+    )
+    .map_err(|e| format!("stored vk verify: {e}"))?;
+    bench.set_stored_vk_verify_us(crate::e2e_bench::elapsed_us(stored_at));
+    if !stored_ok {
+        return Err("production sequence: stored Halo2 proof failed host verify".into());
+    }
 
     std::env::set_var("PIR_KEEP_CHAIN", "1");
     let _keep_chain = KeepLiveChain;
@@ -1328,6 +1365,17 @@ fn production_sequence_live() -> Result<ProductionSequenceReport, String> {
         );
     }
     let deposit = 100u64;
+    let prove_at = std::time::Instant::now();
+    let fresh = hosting_payment::prove_inclusion("PIR-PROD-SEQ", "sib", &group, deposit)
+        .map_err(|e| format!("production sequence: inclusion prove: {e}"))?;
+    bench.set_inclusion_prove_us(crate::e2e_bench::elapsed_us(prove_at));
+    let verify_at = std::time::Instant::now();
+    let fresh_ok = hosting_payment::verify_inclusion(&fresh, "PIR-PROD-SEQ", "sib", &group, deposit)
+        .map_err(|e| format!("production sequence: inclusion verify: {e}"))?;
+    bench.set_inclusion_verify_us(crate::e2e_bench::elapsed_us(verify_at));
+    if !fresh_ok {
+        return Err("production sequence: fresh inclusion proof failed verify".into());
+    }
     let dep_note = tagged_hash(b"prod-seq-zap1-note", &[&group, &deposit.to_le_bytes()]);
     let bundle = crate::zap1::local_hosting_bundle(group, dep_note, deposit, "PIR-PROD-SEQ", "sib");
     let attest = serde_json::to_string(&bundle.lc_helper_request())
@@ -1356,6 +1404,10 @@ fn production_sequence_live() -> Result<ProductionSequenceReport, String> {
     }
     query_live_commit_match(&hint.rest_url, &hint.commit_contract, &ask_hex, &bid_hex)?;
     production_hit(&mut steps, "chacha_oob_bid_commit_match")?;
+    production_bid_pir(&envelope)?;
+    production_hit(&mut steps, "bid_ask_pir_two_proxy_xor")?;
+    production_akt_min_stake()?;
+    production_hit(&mut steps, "akt_min_stake_inclusion")?;
 
     crate::zap1::accept_on_zap1_client(&bundle).map_err(|e| {
         format!("production sequence: ZAP1 live-client accept (not in-proc skip): {e}")
@@ -1398,7 +1450,9 @@ fn production_sequence_live() -> Result<ProductionSequenceReport, String> {
     use crate::escrow::EscrowParty;
     use crate::escrow_notice::{CloseAction, CloseEventAttest, CloseEventAttrs};
     use crate::zap1_lc::{close_event_lc_rebind, CloseEventLcRequest};
-    let acc = ironwood_accrual_from_zakura(&z, open_height, deposit, ask_hex.as_bytes())?;
+    let (acc, accrual_times) =
+        ironwood_accrual_from_zakura(&z, open_height, deposit, ask_hex.as_bytes())?;
+    bench.set_accrual(accrual_times);
     if acc.proof.is_empty() {
         return Err("production sequence: Halo2 of f() missing".into());
     }
@@ -1441,12 +1495,50 @@ fn production_sequence_live() -> Result<ProductionSequenceReport, String> {
     }
     production_hit(&mut steps, "close_grant_lc_attrs")?;
 
+    let challenge = production_frost_stall(&frost, &frost_seats, &opened, &acc)?;
+    let below = z.close_notes_from_challenge(&frost, &frost_seats[..1], &opened, &challenge);
+    match below {
+        Err(crate::zcash_escrow::ZcashEscrowError::FrostCloseStalled { have: 1, need })
+            if need == frost.min_signers => {}
+        other => {
+            return Err(format!(
+                "production sequence: below-threshold close must not spend: {other:?}"
+            ));
+        }
+    }
+    let (finish_earned, finish_remainder) = challenge
+        .finish_amounts(deposit)
+        .map_err(|e| format!("production sequence: finish_amounts: {e}"))?;
+    if finish_earned != acc.earned_zat || finish_earned.saturating_add(finish_remainder) != deposit
+    {
+        return Err(format!(
+            "production sequence: finish_amounts {finish_earned}+{finish_remainder} != accrual {} / deposit {deposit}",
+            acc.earned_zat
+        ));
+    }
+    if challenge.provider_paid_zat() != 0 {
+        return Err("production sequence: stall paid the provider".into());
+    }
+    println!(
+        "frost_stall finish_amounts earned={finish_earned} remainder={finish_remainder} below_threshold_spend=false closer_set_earned=false provider_paid_zat=0"
+    );
+    production_hit(&mut steps, "frost_close_stall_finish_amounts")?;
+
     let (pay, refund) = z
-        .close_notes(&frost, &frost_seats[..2], &opened, acc.earned_zat)
-        .map_err(|e| format!("production sequence: two Ironwood spends: {e}"))?;
+        .close_notes_from_challenge(&frost, &frost_seats[..2], &opened, &challenge)
+        .map_err(|e| format!("production sequence: threshold close from finish_amounts: {e}"))?;
     if pay.txid.is_empty() || refund.txid.is_empty() || pay.txid == refund.txid {
         return Err("production sequence: two Ironwood spends missing distinct txids".into());
     }
+    if pay.spend_stand_in != crate::zcash_escrow::IRONWOOD_SPEND_STAND_IN
+        || refund.spend_stand_in != crate::zcash_escrow::IRONWOOD_SPEND_STAND_IN
+    {
+        return Err(
+            "production sequence: spend stand-in is not ZIP-32 of the reconstructed DKG seed"
+                .into(),
+        );
+    }
+    println!("ironwood_spend_stand_in={}", pay.spend_stand_in);
     production_hit(&mut steps, "two_ironwood_spends")?;
 
     work.deny_winner()
@@ -1459,6 +1551,22 @@ fn production_sequence_live() -> Result<ProductionSequenceReport, String> {
             steps
         ));
     }
+    let txs = crate::e2e_bench::fetch_chain_gas(&hint.rpc_url)
+        .map_err(|e| format!("production sequence: chain gas: {e}"))?;
+    bench.apply_chain(txs);
+    if bench.chain_gas_used == 0 || bench.chain_tx_count == 0 {
+        return Err("production sequence: chain gas record is empty".into());
+    }
+    let dummy_used = frost.is_dealer()
+        || !hint.ics08_accepted
+        || !hint.zap1_stored
+        || hint.rest_url.is_empty()
+        || hint.commit_contract.is_empty();
+    if dummy_used {
+        return Err("production sequence: dummy_used derived true (live LCD/commit/ics08/zap1 credit missing)".into());
+    }
+    crate::e2e_bench::record(&mut bench)
+        .map_err(|e| format!("production sequence: bench history: {e}"))?;
     let report = ProductionSequenceReport {
         steps_hit: steps,
         ask_id: ask_id.into(),
@@ -1468,23 +1576,138 @@ fn production_sequence_live() -> Result<ProductionSequenceReport, String> {
         serve_http: 200,
         earned_txid: pay.txid,
         remainder_txid: refund.txid,
-        dummy_used: frost.is_dealer()
-            || !hint.ics08_accepted
-            || !hint.zap1_stored
-            || hint.rest_url.is_empty()
-            || hint.commit_contract.is_empty(),
-        earned_zat: acc.earned_zat,
+        dummy_used,
+        earned_zat: finish_earned,
         open_height: acc.open_height,
         close_height: acc.close_height,
+        bench,
     };
-    if report.dummy_used {
-        return Err("production sequence: dummy_used derived true (live LCD/commit/ics08/zap1 credit missing)".into());
-    }
     println!(
-        "PRODUCTION_SEQUENCE_OK dummy_used={} serve_http=200 earned_zat={} open_height={} close_height={} steps_hit={:?}",
-        report.dummy_used, report.earned_zat, report.open_height, report.close_height, report.steps_hit
+        "PRODUCTION_SEQUENCE_OK bench_label={} dummy_used={} serve_http=200 earned_zat={} open_height={} close_height={} steps_hit={:?}",
+        report.bench.image, report.dummy_used, report.earned_zat, report.open_height, report.close_height, report.steps_hit
     );
     Ok(report)
+}
+
+#[cfg(feature = "live-ict")]
+fn production_bid_pir(envelope: &EncryptedBidEnvelope) -> Result<(), String> {
+    use crate::bid_ask_pir::{fetch_row, query_pair, BidAskDb, ProviderProxy, ProxyQuery, Row};
+    let commitment = envelope.commitment().commitment;
+    let bid_row = Row::from_bytes(&commitment);
+    let rows = vec![
+        Row::from_bytes(b"ask-prod-seq-row"),
+        bid_row.clone(),
+        Row::from_bytes(b"decoy-prod-seq-row"),
+    ];
+    let mask = vec![1u8, 0, 1];
+    let (q_left, q_right) = query_pair(rows.len(), 1, &mask).map_err(|e| format!("bid pir: {e}"))?;
+    let unit = vec![0u8, 1, 0];
+    if q_left == unit || q_right == unit {
+        return Err("bid pir: a proxy query is the unit index".into());
+    }
+    let mut left = ProviderProxy::new(BidAskDb::new(rows.clone()));
+    let mut right = ProviderProxy::new(BidAskDb::new(rows.clone()));
+    let got = fetch_row(&mut left, &mut right, 1, &mask).map_err(|e| format!("bid pir: {e}"))?;
+    if got != *bid_row.as_bytes() {
+        return Err("bid pir: two-proxy XOR did not return the sealed bid row".into());
+    }
+    if !left.log().hides_index(1, rows.len()) || !right.log().hides_index(1, rows.len()) {
+        return Err("bid pir: a proxy stored the unit index".into());
+    }
+    let mut solo = ProviderProxy::new(BidAskDb::new(rows));
+    let alone = solo.answer(ProxyQuery { bits: q_left });
+    if alone.bytes == *bid_row.as_bytes() {
+        return Err("bid pir: one proxy returned the row; that is not this retrieval".into());
+    }
+    // Two-proxy XOR. Not single-server YPIR.
+    println!("bid_pir_retrieval=two-proxy-xor not_ypir=true");
+    Ok(())
+}
+
+#[cfg(feature = "live-ict")]
+fn production_akt_min_stake() -> Result<(), String> {
+    use crate::akt_stake::{
+        prove_akt_stake_inclusion, statement_holds, verify_akt_stake_inclusion, AktStakePublic,
+        AktStakeWitness, PROOF_LIVE,
+    };
+    if PROOF_LIVE {
+        return Err(
+            "AKT min-stake: PROOF_LIVE must stay false until a real Halo2 proof verifies".into(),
+        );
+    }
+    let public = AktStakePublic::new([0x44; 32], 1_000_001).map_err(|e| e.to_string())?;
+    let witness = AktStakeWitness {
+        bonding_account: b"akash1bond-prod-seq-not-public".to_vec(),
+        stake_uakt: 5_000_000,
+    };
+    statement_holds(&witness, &public).map_err(|e| format!("AKT statement: {e}"))?;
+    if prove_akt_stake_inclusion(&witness, &public).is_ok() {
+        return Err("AKT prove returned bytes while PROOF_LIVE is false".into());
+    }
+    if verify_akt_stake_inclusion(&public, b"not-a-halo2-proof").is_ok()
+        || verify_akt_stake_inclusion(&public, &[]).is_ok()
+    {
+        return Err("AKT verify accepted a proof; refusing to mark inclusion live".into());
+    }
+    let low = AktStakeWitness {
+        bonding_account: witness.bonding_account.clone(),
+        stake_uakt: public.min_stake_uakt - 1,
+    };
+    if statement_holds(&low, &public).is_ok() {
+        return Err("AKT stake below min must not pass".into());
+    }
+    let bytes = public.instance_bytes();
+    if bytes.windows(witness.bonding_account.len()).any(|w| w == witness.bonding_account) {
+        return Err("AKT bonding account leaked into public instances".into());
+    }
+    println!("akt_min_stake proof_live=false statement=held verify=rejected");
+    Ok(())
+}
+
+#[cfg(feature = "live-ict")]
+fn production_frost_stall(
+    frost: &FrostGroup,
+    seats: &[FrostSeat],
+    opened: &crate::zcash_escrow::ShieldedNote,
+    acc: &ProvenAccrual,
+) -> Result<crate::zcash_escrow::CloseChallenge, String> {
+    use crate::zcash_escrow::{record_frost_close_stall, ZcashEscrowError};
+    if seats.len() < 2 || seats.len() < usize::from(frost.min_signers) {
+        return Err("production sequence: DKG seats missing for a later threshold close".into());
+    }
+    let challenge = record_frost_close_stall(
+        frost,
+        &seats[..1],
+        opened,
+        acc.open_height,
+        acc.close_height,
+        1,
+    )
+    .map_err(|e| format!("production sequence: record stall: {e}"))?;
+    if challenge.provider_paid_zat() != 0 {
+        return Err("production sequence: stall stored a provider payment".into());
+    }
+    let invented = acc.earned_zat.saturating_add(9_000);
+    match challenge.try_pay_provider(invented) {
+        Err(ZcashEscrowError::CloserSetEarned) => {}
+        other => {
+            return Err(format!(
+                "production sequence: closer-set earned must be refused: {other:?}"
+            ));
+        }
+    }
+    match challenge.try_pay_provider(challenge.height_earned_quote()) {
+        Err(ZcashEscrowError::FrostCloseStalled { have: 1, .. }) => {}
+        other => {
+            return Err(format!(
+                "production sequence: stalled height quote must not pay: {other:?}"
+            ));
+        }
+    }
+    if challenge.provider_paid_zat() != 0 {
+        return Err("production sequence: stall paid after refusal".into());
+    }
+    Ok(challenge)
 }
 
 #[cfg(feature = "live-ict")]

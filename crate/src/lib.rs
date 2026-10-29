@@ -3,12 +3,15 @@
 
 pub mod access;
 pub mod accrual;
+pub mod akt_stake;
 pub mod ask;
 pub mod bid;
+pub mod bid_ask_pir;
 pub mod committee;
 pub mod custody;
 pub mod cw_orch;
 pub mod e2e;
+pub mod e2e_bench;
 pub mod escrow;
 pub mod escrow_notice;
 pub mod dregg;
