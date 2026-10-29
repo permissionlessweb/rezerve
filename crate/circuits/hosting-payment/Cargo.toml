@@ -14,16 +14,16 @@ required-features = ["store-full-circuit"]
 
 [features]
 default = []
-# Path A store-full-circuit needs CS.write + 80-byte CircuitFooter (crates.io 0.3 lacks CS write).
+# Path A store-full-circuit needs CS.write + 80-byte CircuitFooter.
+# zakura-halo2-proofs (workspace patch) has CS write. crates.io halo2_proofs 0.3 does not.
 store-full-circuit = []
 
 [dependencies]
-ff = "0.13"
-group = "0.13"
-halo2_proofs = { path = "../../../zcash/halo2/halo2_proofs" }
-pasta_curves = "0.5"
-rand = "0.8"
-getrandom = "0.2"
-sha2 = "0.10"
-hex = "0.4"
-zap1-verify = "0.2.1"
+ff = { workspace = true }
+group = { workspace = true }
+halo2_proofs = { workspace = true }
+pasta_curves = { workspace = true }
+rand = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+zap1-verify = { workspace = true }

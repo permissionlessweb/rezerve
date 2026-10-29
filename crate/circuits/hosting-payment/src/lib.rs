@@ -8,6 +8,10 @@
 //!   [2] amount_class
 //!   [3] hosting_kind  (domain `HOSTING_PAYMENT`)
 //!
+//! Those four rows are not a renter id and not an account. Accrual public
+//! instances are the packed commitment and the two header hashes (96 bytes),
+//! not a note id, renter id, or account.
+//!
 //! Private (never on CosmWasm execute): serial, month, year, Merkle sibling
 //! bytes, left/right bit.
 //!
@@ -26,9 +30,10 @@ mod chip;
 mod accrual;
 
 pub use accrual::{
-    accrual_commit_bytes, accrual_preimage, accrual_public_scalars, decode_accrual_instances,
-    encode_accrual_instances, prove_accrual, verify_accrual, ACCRUAL_CIRCUIT_ID, ACCRUAL_INSTANCE_COUNT,
-    ACCRUAL_K, ACCRUAL_PERSONAL, ACCRUAL_PREIMAGE_LEN, ACCRUAL_ZKID,
+    accrual_commit_bytes, accrual_commit_note_bytes, accrual_preimage, accrual_preimage_note,
+    accrual_public_scalars, decode_accrual_instances, encode_accrual_instances, prove_accrual,
+    prove_accrual_note, verify_accrual, ACCRUAL_CIRCUIT_ID, ACCRUAL_INSTANCE_COUNT, ACCRUAL_K,
+    ACCRUAL_PERSONAL, ACCRUAL_PREIMAGE_LEN, ACCRUAL_ZKID,
 };
 
 use crate::blake2b::{hosting_payment_leaf, node_hash, program_entry_leaf, LEAF_PERSONAL, NODE_PERSONAL};
@@ -41,7 +46,7 @@ use halo2_proofs::{
     transcript::{Blake2bRead, Blake2bWrite, Challenge255},
 };
 use pasta_curves::{pallas, vesta};
-use rand::rngs::OsRng;
+use rand::rng;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -641,7 +646,7 @@ pub fn prove_inclusion(
     let instance = to_halo2_instance(&pubs);
     let refs: Vec<&[vesta::Scalar]> = instance.iter().map(|r| &r[..]).collect();
     let mut transcript = Blake2bWrite::<_, vesta::Affine, Challenge255<_>>::init(vec![]);
-    plonk::create_proof(params, pk, &[circuit], &[&refs], OsRng, &mut transcript)
+    plonk::create_proof(params, pk, &[circuit], &[&refs], rng(), &mut transcript)
         .map_err(|e| format!("create_proof: {e}"))?;
     Ok(transcript.finalize())
 }
@@ -689,10 +694,10 @@ pub fn cs_is_hosting_payment_wordchip(
         return Err("loaded CS has no lookups; toy field-mul is not HOSTING_PAYMENT".into());
     }
     // WordChip: bool, add64, fadd, compose_nibble, mul, byte, nibble4 (+ range/xor lookups).
-    if cs.get_gate_count() < 7 {
+    if cs.gate_count() < 7 {
         return Err("loaded CS too small for BLAKE2b Merkle (toy field-mul rejected)".into());
     }
-    if cs.get_num_advice_columns() < 5 || cs.get_num_instance_columns() != 1 {
+    if cs.num_advice_columns() < 5 || cs.num_instance_columns() != 1 {
         return Err("loaded CS column counts are not HOSTING_PAYMENT WordChip".into());
     }
     Ok(())
@@ -711,7 +716,14 @@ fn halo2_verify_proof(
     let mut transcript = Blake2bRead::<_, vesta::Affine, Challenge255<_>>::init(proof);
     match plonk::verify_proof(params, vk, strategy, &[&refs], &mut transcript) {
         Ok(()) => Ok(true),
-        Err(_) => Ok(false),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("not satisfied") {
+                Ok(false)
+            } else {
+                Err(format!("verify_proof: {msg}"))
+            }
+        },
     }
 }
 
@@ -1001,7 +1013,7 @@ pub fn verify_proof_with_store(
         .map_err(|e| format!("cs.read: {e}"))?;
     cs_is_hosting_payment_wordchip(&cs)?;
     let mut vk_r = std::io::Cursor::new(&vk_body[cs_len..cs_len + vk_len]);
-    let vk = plonk::VerifyingKey::<vesta::Affine>::read_with_cs(&mut vk_r, &params, cs, vec![])
+    let vk = plonk::VerifyingKey::<vesta::Affine>::read_with_cs(&mut vk_r, &params, cs)
         .map_err(|e| format!("vk.read_with_cs: {e}"))?;
     halo2_verify_proof(&params, &vk, proof, &pubs)
 }
@@ -1009,6 +1021,25 @@ pub fn verify_proof_with_store(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hosting_payment_instances_omit_renter_id() {
+        let renter = [0xeeu8; 32];
+        let account = [0xefu8; 32];
+        let frost = [0x44u8; 32];
+        assert_ne!(frost, renter);
+        let inst = encode_instances("note-bound", "sib", &frost, 7);
+        assert_eq!(inst.len(), 128);
+        assert_eq!(INSTANCE_COUNT, 4);
+        let pubs = public_scalars("note-bound", "sib", &frost, 7);
+        assert_eq!(pubs[1], pack_hash32(&frost));
+        assert_eq!(pubs[2], pallas::Base::from(7u64));
+        assert_eq!(pubs[3], hosting_kind());
+        assert!(!inst.chunks(32).any(|c| c == renter || c == account));
+        assert_ne!(pubs[0], pack_hash32(&renter));
+        assert_ne!(pubs[1], pack_hash32(&renter));
+        assert_ne!(pubs[1], pack_hash32(&account));
+    }
 
     #[test]
     fn zap1_leaf_is_not_toy_field_mul() {
@@ -1057,7 +1088,7 @@ mod tests {
         let _ = HostingPaymentCircuit::configure(&mut meta);
         cs_is_hosting_payment_wordchip(&meta).expect("WordChip BLAKE2b Merkle CS");
         assert!(
-            meta.get_gate_count() >= 7,
+            meta.gate_count() >= 7,
             "toy field-mul is a single mul gate; HOSTING_PAYMENT needs WordChip"
         );
     }

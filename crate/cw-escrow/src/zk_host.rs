@@ -1,6 +1,6 @@
 //! wasm32 FFI to zk-wasmvm `proof_instance_verify` for `f` (96-byte instances).
 //!
-//! Guest stays on cosmwasm-std 1.5 (no `Api::proof_instance_verify`). Missing
+//! Crate depends on local cosmwasm-std 4.1 (`Api::proof_instance_verify` exists). Missing
 //! import → wasm instantiate fails (fail closed). Crypto-false → 1.
 
 #![cfg(target_arch = "wasm32")]
@@ -50,7 +50,7 @@ pub fn verify(zkid: u64, proof: &[u8], instances: &[u8]) -> Result<bool, StdErro
     match result {
         0 => Ok(true),
         1 => Ok(false),
-        code => Err(StdError::generic_err(format!(
+        code => Err(StdError::msg(format!(
             "zk-wasmvm proof_instance_verify host error {code}"
         ))),
     }

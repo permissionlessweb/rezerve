@@ -118,10 +118,10 @@ pub struct MatchResp {
 fn hex32(s: &str) -> StdResult<[u8; 32]> {
     let t = s.trim().trim_start_matches("0x");
     if t.len() != 64 || !t.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(StdError::generic_err("need 32-byte hex"));
+        return Err(StdError::msg("need 32-byte hex"));
     }
     let mut out = [0u8; 32];
-    hex::decode_to_slice(t, &mut out).map_err(|e| StdError::generic_err(e.to_string()))?;
+    hex::decode_to_slice(t, &mut out).map_err(|e| StdError::msg(e.to_string()))?;
     Ok(out)
 }
 
@@ -180,7 +180,7 @@ pub fn execute(deps: DepsMut, _env: Env, _info: MessageInfo, msg: ExecuteMsg) ->
             dest_client,
         } => {
             if source_client.is_empty() || dest_client.is_empty() {
-                return Err(StdError::generic_err("empty client id"));
+                return Err(StdError::msg("empty client id"));
             }
             CLIENTS.save(
                 deps.storage,
@@ -207,11 +207,11 @@ pub fn execute(deps: DepsMut, _env: Env, _info: MessageInfo, msg: ExecuteMsg) ->
             proof,
         } => {
             if sequence == 0 {
-                return Err(StdError::generic_err("zero sequence"));
+                return Err(StdError::msg("zero sequence"));
             }
             if let Some(c) = CLIENTS.may_load(deps.storage)? {
                 if c.source_client != source_client || c.dest_client != dest_client {
-                    return Err(StdError::generic_err("client id mismatch"));
+                    return Err(StdError::msg("client id mismatch"));
                 }
             }
             let note = hex32(&note_hex)?;
@@ -221,7 +221,7 @@ pub fn execute(deps: DepsMut, _env: Env, _info: MessageInfo, msg: ExecuteMsg) ->
             let submitted = hex32(&app_data_hash_hex)?;
             let expect = app_data_hash(&note, amount_zat, &frost, &leaf);
             if submitted != expect {
-                return Err(StdError::generic_err("tampered app_data_hash"));
+                return Err(StdError::msg("tampered app_data_hash"));
             }
             let payload = match event_kind.as_str() {
                 "hosting_payment" => EventPayload::HostingPayment {
@@ -236,11 +236,11 @@ pub fn execute(deps: DepsMut, _env: Env, _info: MessageInfo, msg: ExecuteMsg) ->
                     wallet_hash: wallet_or_serial.as_bytes(),
                     serial_number: b"pir-seat",
                 },
-                _ => return Err(StdError::generic_err("unknown event_kind")),
+                _ => return Err(StdError::msg("unknown event_kind")),
             };
             let computed = compute_leaf_hash(&payload);
             if computed != leaf {
-                return Err(StdError::generic_err("leaf does not match event"));
+                return Err(StdError::msg("leaf does not match event"));
             }
             let path: StdResult<Vec<ProofStep>> = proof
                 .iter()
@@ -256,7 +256,7 @@ pub fn execute(deps: DepsMut, _env: Env, _info: MessageInfo, msg: ExecuteMsg) ->
                 })
                 .collect();
             if !verify_proof(&leaf, &path?, &root) {
-                return Err(StdError::generic_err("zap1 merkle proof failed"));
+                return Err(StdError::msg("zap1 merkle proof failed"));
             }
             let cmt = packet_commitment(
                 &source_client,
@@ -269,7 +269,7 @@ pub fn execute(deps: DepsMut, _env: Env, _info: MessageInfo, msg: ExecuteMsg) ->
                 .may_load(deps.storage, (&source_client, &dest_client, sequence))?
                 .is_some()
             {
-                return Err(StdError::generic_err("duplicate sequence"));
+                return Err(StdError::msg("duplicate sequence"));
             }
             PACKETS.save(
                 deps.storage,
@@ -295,19 +295,19 @@ pub fn execute(deps: DepsMut, _env: Env, _info: MessageInfo, msg: ExecuteMsg) ->
             instances,
         } => {
             if sequence == 0 {
-                return Err(StdError::generic_err("zero sequence"));
+                return Err(StdError::msg("zero sequence"));
             }
             if let Some(c) = CLIENTS.may_load(deps.storage)? {
                 if c.source_client != source_client || c.dest_client != dest_client {
-                    return Err(StdError::generic_err("client id mismatch"));
+                    return Err(StdError::msg("client id mismatch"));
                 }
             }
             let submitted = hex32(&app_data_hash_hex)?;
             if instances.len() != 128 {
-                return Err(StdError::generic_err("instances must be 128 bytes"));
+                return Err(StdError::msg("instances must be 128 bytes"));
             }
             if proof.is_empty() {
-                return Err(StdError::generic_err("empty halo2 proof"));
+                return Err(StdError::msg("empty halo2 proof"));
             }
             let ok = {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -317,7 +317,7 @@ pub fn execute(deps: DepsMut, _env: Env, _info: MessageInfo, msg: ExecuteMsg) ->
                         proof.as_slice(),
                         instances.as_slice(),
                     )
-                    .map_err(StdError::generic_err)?
+                    .map_err(StdError::msg)?
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -325,7 +325,7 @@ pub fn execute(deps: DepsMut, _env: Env, _info: MessageInfo, msg: ExecuteMsg) ->
                 }
             };
             if !ok {
-                return Err(StdError::generic_err("halo2 proof_instance_verify rejected"));
+                return Err(StdError::msg("halo2 proof_instance_verify rejected"));
             }
             let root_hex = hex::encode(&instances.as_slice()[..32]);
             let cmt = packet_commitment(
@@ -339,7 +339,7 @@ pub fn execute(deps: DepsMut, _env: Env, _info: MessageInfo, msg: ExecuteMsg) ->
                 .may_load(deps.storage, (&source_client, &dest_client, sequence))?
                 .is_some()
             {
-                return Err(StdError::generic_err("duplicate sequence"));
+                return Err(StdError::msg("duplicate sequence"));
             }
             PACKETS.save(
                 deps.storage,
@@ -390,8 +390,15 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-    use cosmwasm_std::{from_json, Addr};
+    use cosmwasm_std::testing::{mock_dependencies, mock_env};
+    use cosmwasm_std::{from_json, Addr, Coin, MessageInfo};
+
+    fn mock_info(sender: &str, funds: &[Coin]) -> MessageInfo {
+        MessageInfo {
+            sender: Addr::unchecked(sender),
+            funds: funds.to_vec(),
+        }
+    }
     use zap1_verify::node_hash;
 
     #[test]

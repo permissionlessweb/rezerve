@@ -7,7 +7,7 @@
 //! live-ict: one `pir-live-attach` process (`daemon_builder_from_chain` +
 //! `deploy_on` on Daemon); this Mock suite is not that process.
 
-use cosmwasm_std::{coin, Addr, Uint128};
+use cosmwasm_std::{coin, Addr, Uint256};
 use cw_orch::prelude::*;
 use cw_pir_commit::ExecuteMsg as CommitExecute;
 use pir_cw_orch::{
@@ -31,7 +31,7 @@ fn deploy_on_then_escrow_close_grant_and_commit() {
                 ask_commitment: ask.clone(),
                 bid_commitment: bid.clone(),
             },
-            Some(&[]),
+            &[],
         )
         .expect("commit");
 
@@ -60,12 +60,12 @@ fn deploy_on_then_escrow_close_grant_and_commit() {
     let provider = Addr::unchecked("provider1");
     let t = mock
         .query_balance(&tenant, "uterp")
-        .unwrap_or(Uint128::zero());
+        .unwrap_or(Uint256::zero());
     let p = mock
         .query_balance(&provider, "uterp")
-        .unwrap_or(Uint128::zero());
-    assert_eq!(p.u128(), 0, "close is grant-only; no uterp to provider");
-    assert_eq!(t.u128(), 0, "close is grant-only; no uterp to tenant");
+        .unwrap_or(Uint256::zero());
+    assert_eq!(p, Uint256::zero(), "close is grant-only; no uterp to provider");
+    assert_eq!(t, Uint256::zero(), "close is grant-only; no uterp to tenant");
 
     let no_grant = suite
         .escrow
@@ -81,7 +81,7 @@ fn deploy_on_then_escrow_close_grant_and_commit() {
                 source_client: "08-zap1-src".into(),
                 dest_client: "08-terp-dst".into(),
             },
-            Some(&[]),
+            &[],
         )
         .expect("ics08 create_client (store-only instantiate is not packet accept)");
     let none: Ics08AcceptedResp = suite
@@ -113,7 +113,7 @@ fn grant_query_before_close_fails() {
                 resolver: "r".into(),
                 deposit_zat: 50,
             },
-            Some(&[]),
+            &[],
         )
         .unwrap();
     let cell_id = res
@@ -142,7 +142,7 @@ fn open_cell_rejects_bank_funds() {
                 resolver: "r".into(),
                 deposit_zat: 50,
             },
-            Some(&[coin(50, "uterp")]),
+            &[coin(50, "uterp")],
         )
         .expect_err("OpenCell must reject uter p bank funds");
     let s = err.to_string();

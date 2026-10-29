@@ -1,6 +1,6 @@
 //! wasm32 FFI to zk-wasmvm `proof_instance_verify`.
 //!
-//! Guest stays on cosmwasm-std 1.5 (no `Api::proof_instance_verify`). The
+//! Crate depends on local cosmwasm-std 4.1 (`Api::proof_instance_verify` exists). The
 //! host import is the same Path A waist as std 3.1 feature `zk`:
 //! `env.proof_instance_verify(zkid, region_ptr, len, region_ptr, len)`.
 //! Missing import → wasm instantiate fails (fail closed). Crypto-false → 1.
@@ -9,7 +9,7 @@
 
 use cosmwasm_std::StdError;
 
-/// CosmWasm 1.5 Region (crate-private in std; we duplicate the ABI).
+/// Region ABI duplicated here (crate-private in cosmwasm-std).
 #[repr(C)]
 struct Region {
     offset: u32,
@@ -53,7 +53,7 @@ pub fn verify(zkid: u64, proof: &[u8], instances: &[u8]) -> Result<bool, StdErro
     match result {
         0 => Ok(true),
         1 => Ok(false),
-        code => Err(StdError::generic_err(format!(
+        code => Err(StdError::msg(format!(
             "zk-wasmvm proof_instance_verify host error {code}"
         ))),
     }

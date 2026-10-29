@@ -44,7 +44,7 @@ const CELLS: Map<&str, Cell> = Map::new("cells");
 
 fn require_hex32(s: &str) -> StdResult<()> {
     if s.len() != 64 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(StdError::generic_err("must be 32-byte hex"));
+        return Err(StdError::msg("must be 32-byte hex"));
     }
     Ok(())
 }
@@ -58,7 +58,7 @@ fn pack_fe32(bytes: &[u8; 32]) -> [u8; 32] {
 
 fn decode_hex32(s: &str) -> StdResult<[u8; 32]> {
     require_hex32(s)?;
-    let b = hex::decode(s).map_err(|_| StdError::generic_err("must be 32-byte hex"))?;
+    let b = hex::decode(s).map_err(|_| StdError::msg("must be 32-byte hex"))?;
     let mut out = [0u8; 32];
     out.copy_from_slice(&b);
     Ok(out)
@@ -135,15 +135,15 @@ fn open(
 ) -> StdResult<Response> {
     require_hex32(&bid_commitment)?;
     if tenant.is_empty() || provider.is_empty() || resolver.is_empty() {
-        return Err(StdError::generic_err("empty member"));
+        return Err(StdError::msg("empty member"));
     }
     if info.funds.iter().any(|c| !c.amount.is_zero()) {
-        return Err(StdError::generic_err(
+        return Err(StdError::msg(
             "OpenCell rejects bank funds; deposit is Zcash notes (deposit_zat accounting only)",
         ));
     }
     if deposit_zat == 0 {
-        return Err(StdError::generic_err("zero deposit"));
+        return Err(StdError::msg("zero deposit"));
     }
     let cell_id = hex::encode(sha_like(
         deposit_zat,
@@ -153,7 +153,7 @@ fn open(
         &resolver,
     ));
     if CELLS.may_load(deps.storage, &cell_id)?.is_some() {
-        return Err(StdError::generic_err("cell exists"));
+        return Err(StdError::msg("cell exists"));
     }
     CELLS.save(
         deps.storage,
@@ -212,15 +212,15 @@ fn accrue(
 ) -> StdResult<Response> {
     let mut c = CELLS
         .may_load(deps.storage, &cell_id)?
-        .ok_or_else(|| StdError::generic_err("unknown cell"))?;
+        .ok_or_else(|| StdError::msg("unknown cell"))?;
     if c.closed {
-        return Err(StdError::generic_err("already closed"));
+        return Err(StdError::msg("already closed"));
     }
     require_hex32(&commitment)?;
     require_hex32(&open_header_hash)?;
     require_hex32(&close_header_hash)?;
     if open_header_hash == close_header_hash {
-        return Err(StdError::generic_err("open and close headers must differ"));
+        return Err(StdError::msg("open and close headers must differ"));
     }
     let halo2_instances = encode_halo2_instances(&commitment, &open_header_hash, &close_header_hash)?;
     c.accrual_commitment = Some(commitment.clone());
@@ -247,42 +247,42 @@ fn verify_accrual_halo2(
 ) -> StdResult<Response> {
     let mut c = CELLS
         .may_load(deps.storage, &cell_id)?
-        .ok_or_else(|| StdError::generic_err("unknown cell"))?;
+        .ok_or_else(|| StdError::msg("unknown cell"))?;
     if c.closed {
-        return Err(StdError::generic_err("already closed"));
+        return Err(StdError::msg("already closed"));
     }
     let inst_hex = c
         .halo2_instances
         .clone()
-        .ok_or_else(|| StdError::generic_err("accrue commitment required before halo2 verify"))?;
+        .ok_or_else(|| StdError::msg("accrue commitment required before halo2 verify"))?;
     if inst_hex.len() != 192 {
-        return Err(StdError::generic_err(
+        return Err(StdError::msg(
             "Halo2 instances of f() required before proof_instance_verify",
         ));
     }
     if proof.is_empty() {
-        return Err(StdError::generic_err("empty halo2 proof"));
+        return Err(StdError::msg("empty halo2 proof"));
     }
     if proof.as_slice().starts_with(b"DSTW") {
-        return Err(StdError::generic_err("DummyStwo proofs are forbidden"));
+        return Err(StdError::msg("DummyStwo proofs are forbidden"));
     }
     if proof.len() < 64 {
-        return Err(StdError::generic_err("invalid halo2 proof"));
+        return Err(StdError::msg("invalid halo2 proof"));
     }
     if zkid != ACCRUAL_ZKID {
-        return Err(StdError::generic_err(
+        return Err(StdError::msg(
             "HOSTING_PAYMENT zkid is not f(); use pir-accrual.f.v1",
         ));
     }
-    let inst = hex::decode(&inst_hex).map_err(|_| StdError::generic_err("halo2 instances hex"))?;
+    let inst = hex::decode(&inst_hex).map_err(|_| StdError::msg("halo2 instances hex"))?;
     if inst.len() != 96 {
-        return Err(StdError::generic_err("accrual instances must be 96 bytes"));
+        return Err(StdError::msg("accrual instances must be 96 bytes"));
     }
     let ok = {
         #[cfg(not(target_arch = "wasm32"))]
         {
             hosting_payment::proof_instance_verify(zkid, proof.as_slice(), inst.as_slice())
-                .map_err(StdError::generic_err)?
+                .map_err(StdError::msg)?
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -290,7 +290,7 @@ fn verify_accrual_halo2(
         }
     };
     if !ok {
-        return Err(StdError::generic_err("halo2 proof_instance_verify rejected"));
+        return Err(StdError::msg("halo2 proof_instance_verify rejected"));
     }
     c.halo2_verified = true;
     CELLS.save(deps.storage, &cell_id, &c)?;
@@ -311,19 +311,19 @@ fn close(
 ) -> StdResult<Response> {
     let mut c = CELLS
         .may_load(deps.storage, &cell_id)?
-        .ok_or_else(|| StdError::generic_err("unknown cell"))?;
+        .ok_or_else(|| StdError::msg("unknown cell"))?;
     if c.closed {
-        return Err(StdError::generic_err("already closed"));
+        return Err(StdError::msg("already closed"));
     }
     let commitment = c
         .accrual_commitment
         .clone()
-        .ok_or_else(|| StdError::generic_err("accrue commitment required before close"))?;
+        .ok_or_else(|| StdError::msg("accrue commitment required before close"))?;
     let open_h = c.open_header_hash.clone().unwrap_or_default();
     let close_h = c.close_header_hash.clone().unwrap_or_default();
     let halo2 = c.halo2_instances.clone().unwrap_or_default();
     if halo2.len() != 192 {
-        return Err(StdError::generic_err(
+        return Err(StdError::msg(
             "Halo2 instances of f() required before close (fail-closed missing proof waist)",
         ));
     }
@@ -356,9 +356,9 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::Grant { cell_id } => {
             let c = CELLS
                 .may_load(deps.storage, &cell_id)?
-                .ok_or_else(|| StdError::generic_err("unknown cell"))?;
+                .ok_or_else(|| StdError::msg("unknown cell"))?;
             if !c.closed {
-                return Err(StdError::generic_err("no grant"));
+                return Err(StdError::msg("no grant"));
             }
             to_json_binary(&GrantResp {
                 cell_id,
@@ -376,7 +376,7 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::Cell { cell_id } => {
             let c = CELLS
                 .may_load(deps.storage, &cell_id)?
-                .ok_or_else(|| StdError::generic_err("unknown cell"))?;
+                .ok_or_else(|| StdError::msg("unknown cell"))?;
             to_json_binary(&CellResp {
                 cell_id,
                 deposit_zat: c.deposit_zat,
@@ -400,8 +400,15 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-    use cosmwasm_std::{from_json, Binary, Coin, Uint128};
+    use cosmwasm_std::testing::{mock_dependencies, mock_env};
+    use cosmwasm_std::{from_json, Addr, Binary, Coin, MessageInfo};
+
+    fn mock_info(sender: &str, funds: &[Coin]) -> MessageInfo {
+        MessageInfo {
+            sender: Addr::unchecked(sender),
+            funds: funds.to_vec(),
+        }
+    }
 
     fn bid_hex() -> String {
         hex::encode([7u8; 32])

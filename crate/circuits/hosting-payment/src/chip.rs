@@ -1,4 +1,4 @@
-//! 64-bit ALU + one-block BLAKE2b-256 for pasta / halo2_proofs 0.3.
+//! 64-bit ALU + one-block BLAKE2b-256 for pasta / zakura-halo2-proofs 5.
 //!
 //! Words are 16 range-checked nibbles. XOR is a 4-bit lookup. ROTR 32/24/16
 //! permute nibbles; ROTR 63 splits to bits.
@@ -724,6 +724,43 @@ impl<F: PrimeField> WordChip<F> {
             &mut h,
             block_words,
             t,
+            true,
+        )?;
+        Ok([h[0].clone(), h[1].clone(), h[2].clone(), h[3].clone()])
+    }
+
+    /// Two-block BLAKE2b-256. First block is full (`t0`, not last). Second
+    /// block is the tail (`t1`, last). Same IV / personalization as one block.
+    pub fn blake2b_two_blocks(
+        &self,
+        mut layouter: impl Layouter<F>,
+        block0: &[Word64<F>; 16],
+        block1: &[Word64<F>; 16],
+        t0: &Word64<F>,
+        t1: &Word64<F>,
+        personal_lo: u64,
+        personal_hi: u64,
+    ) -> Result<[Word64<F>; 4], Error> {
+        let mut init = IV;
+        init[0] ^= 0x0101_0020;
+        init[6] ^= personal_lo;
+        init[7] ^= personal_hi;
+        let mut h: [Word64<F>; 8] = core::array::from_fn(|_| block0[0].clone());
+        for i in 0..8 {
+            h[i] = self.constant_u64(layouter.namespace(|| format!("h{i}")), init[i])?;
+        }
+        self.compress(
+            layouter.namespace(|| "compress0"),
+            &mut h,
+            block0,
+            t0,
+            false,
+        )?;
+        self.compress(
+            layouter.namespace(|| "compress1"),
+            &mut h,
+            block1,
+            t1,
             true,
         )?;
         Ok([h[0].clone(), h[1].clone(), h[2].clone(), h[3].clone()])

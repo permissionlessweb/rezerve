@@ -82,7 +82,7 @@ impl<Chain: CwEnv> PrivateInference<Chain> {
                 resolver,
                 deposit_zat,
             },
-            Some(&[]),
+            &[],
         )?;
         let cell_id = res
             .event_attr_value("wasm", "cell_id")
@@ -95,14 +95,14 @@ impl<Chain: CwEnv> PrivateInference<Chain> {
                 open_header_hash,
                 close_header_hash,
             },
-            Some(&[]),
+            &[],
         )?;
         self.escrow.execute(
             &EscrowExecuteMsg::Close {
                 cell_id: cell_id.clone(),
                 party: closer,
             },
-            Some(&[]),
+            &[],
         )?;
         let grant: GrantResp = self.escrow.query(&EscrowQueryMsg::Grant {
             cell_id: cell_id.clone(),
@@ -128,22 +128,17 @@ impl<Chain: CwEnv> Deploy<Chain> for PrivateInference<Chain> {
         let suite = Self::store_on(chain)?;
         suite
             .commit
-            .instantiate(&CommitInstantiateMsg {}, None, Some(&[]))?;
+            .instantiate(&CommitInstantiateMsg {}, None, &[])?;
         suite
             .escrow
-            .instantiate(&EscrowInstantiateMsg {}, None, Some(&[]))?;
+            .instantiate(&EscrowInstantiateMsg {}, None, &[])?;
         suite
             .zap1_ibcv2
-            .instantiate(&Zap1InstantiateMsg {}, None, Some(&[]))?;
+            .instantiate(&Zap1InstantiateMsg {}, None, &[])?;
         suite
             .ics08_zap1
-            .instantiate(&Ics08InstantiateMsg {}, None, Some(&[]))?;
+            .instantiate(&Ics08InstantiateMsg {}, None, &[])?;
         Ok(suite)
-    }
-
-    fn deployed_state_file_path() -> Option<String> {
-        let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("state.json");
-        Some(p.display().to_string())
     }
 
     fn get_contracts_mut(&mut self) -> Vec<Box<&mut dyn ContractInstance<Chain>>> {

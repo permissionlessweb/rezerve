@@ -20,7 +20,7 @@ fn deploy_on_mock_then_commit_match() {
                 ask_commitment: ask.clone(),
                 bid_commitment: bid.clone(),
             },
-            Some(&[]),
+            &[],
         )
         .expect("post commitments");
 

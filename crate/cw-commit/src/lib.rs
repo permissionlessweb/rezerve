@@ -17,11 +17,11 @@ const BID: Item<String> = Item::new("bid_c");
 
 fn require_hex32(s: &str) -> StdResult<()> {
     if s.len() != 64 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(StdError::generic_err("commitment must be 32-byte hex"));
+        return Err(StdError::msg("commitment must be 32-byte hex"));
     }
     let low = s.to_ascii_lowercase();
     if low.contains("price") || low.contains("identity") {
-        return Err(StdError::generic_err("price/identity not allowed"));
+        return Err(StdError::msg("price/identity not allowed"));
     }
     Ok(())
 }
@@ -46,7 +46,7 @@ pub fn execute(deps: DepsMut, _env: Env, _info: MessageInfo, msg: ExecuteMsg) ->
             } else if key == "bid" {
                 BID.save(deps.storage, &value)?;
             } else {
-                return Err(StdError::generic_err("only ask|bid keys"));
+                return Err(StdError::msg("only ask|bid keys"));
             }
             Ok(Response::new())
         }

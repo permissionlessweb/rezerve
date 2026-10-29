@@ -14,13 +14,13 @@ codegen-units = 1
 overflow-checks = true
 
 [dependencies]
-cosmwasm-std = "1.5"
-cw-storage-plus = "1.2"
-hex = "0.4"
-serde = { version = "1", features = ["derive"] }
-sha2 = "0.10"
-zap1-verify = "0.2.1"
+cosmwasm-std = { workspace = true }
+cw-storage-plus = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+zap1-verify = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-cw-orch = "0.24"
+cw-orch = { workspace = true }
 hosting-payment = { path = "../circuits/hosting-payment" }

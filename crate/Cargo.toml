@@ -60,7 +60,9 @@ path = "tests/arbiter_compose.rs"
 required-features = ["cw-orch-suite"]
 
 [dependencies]
-terp-seams = { path = "../terp-rs/crates/terp-seams", optional = true, default-features = false, features = ["dex"] }
+# These four use the re-zerve workspace table. The package stays excluded until
+# the zcash sha2 =0.11.0-pre.4 pin can unify with wasmer-types ^0.11.
+terp-seams = { workspace = true, optional = true, default-features = false, features = ["dex"] }
 chacha20poly1305 = "0.10"
 frost-ed25519 = "2.1"
 getrandom = "0.2"
@@ -80,7 +82,7 @@ zcash_transparent = { version = "0.10", features = ["transparent-inputs"] }
 zcash_script = "0.4"
 secp256k1 = { version = "0.29", features = ["global-context"] }
 zcash_proofs = { version = "0.30", features = ["bundled-prover"] }
-cw-ics08-wasm-zap1 = { path = "../terp-rs/contracts/light-clients/cw-ics08-wasm-zap1" }
+cw-ics08-wasm-zap1 = { workspace = true }
 pir-cw-orch = { path = "interface", optional = true }
-cw-orch = { version = "0.24", optional = true }
-cosmwasm-std = { version = "1.5", optional = true }
+cw-orch = { workspace = true, optional = true }
+cosmwasm-std = { workspace = true, optional = true }

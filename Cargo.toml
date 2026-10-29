@@ -1,0 +1,88 @@
+# re-zerve workspace.
+# Versions match terp-rs workspace.dependencies. Patches point at the
+# existing terp-core checkouts (local CosmWasm, local zakura-halo2).
+# This is not a second Halo2 tree.
+#
+# rand is 0.10 because zakura-halo2-proofs 5.0.0 binds Rng at 0.10.
+# terp-rs workspace.dependencies still lists rand 0.9 for other crates.
+
+[workspace]
+resolver = "2"
+# private-inference-rent (crate/) stays excluded. crates.io zcash_transparent 0.10
+# pins bip32 0.6.0-pre.1 -> sha2 =0.11.0-pre.4, which cannot unify with
+# wasmer-types sha2 ^0.11 pulled by cw-orch-core default feature zk (zk-cosmwasm).
+# live-chain is excluded (ict-rs paths). Not a second Halo2 tree.
+
+members = [
+    "crate/circuits/hosting-payment",
+    "crate/cw-commit",
+    "crate/cw-escrow",
+    "crate/cw-zap1-ibcv2",
+    "crate/interface",
+]
+exclude = [
+    "crate",
+    "crate/live-chain",
+]
+
+[workspace.dependencies]
+cosmwasm-schema = { version = "=4.1.0" }
+cosmwasm-std = { version = "=4.1.0", default-features = false, features = ["exports", "iterator", "std"] }
+cw-ics08-wasm-zap1 = { path = "../terp-core/crates/terp-rs/contracts/light-clients/cw-ics08-wasm-zap1" }
+cw-orch = { version = "0.30.0" }
+cw-storage-plus = { version = "3.0.1" }
+ff = "0.14"
+group = "0.14"
+halo2_proofs = { package = "zakura-halo2-proofs", version = "=5.0.0", default-features = false, features = ["batch"] }
+hex = "0.4"
+pasta_curves = { package = "zakura-pasta-curves", version = "=5.0.0", default-features = false, features = ["default"] }
+rand = "0.10"
+schemars = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10.8"
+terp-seams = { path = "../terp-core/crates/terp-rs/crates/terp-seams", default-features = false }
+thiserror = "2.0"
+zap1-verify = "0.2.1"
+
+[patch.crates-io]
+cosmwasm-core = { path = "../terp-core/crates/cosmwasm/packages/core" }
+cosmwasm-crypto = { path = "../terp-core/crates/cosmwasm/packages/crypto" }
+cosmwasm-derive = { path = "../terp-core/crates/cosmwasm/packages/derive" }
+cosmwasm-schema = { path = "../terp-core/crates/cosmwasm/packages/schema" }
+cosmwasm-schema-derive = { path = "../terp-core/crates/cosmwasm/packages/schema-derive" }
+cosmwasm-std = { path = "../terp-core/crates/cosmwasm/packages/std" }
+cw-schema = { path = "../terp-core/crates/cosmwasm/packages/cw-schema" }
+cw-schema-derive = { path = "../terp-core/crates/cosmwasm/packages/cw-schema-derive" }
+cw-storage-plus = { path = "../terp-core/crates/cw-storage-plus" }
+cw-controllers = { path = "../terp-core/crates/cw-minus/packages/controllers" }
+cw-utils = { path = "../terp-core/crates/cw-minus/packages/cw-utils" }
+cw2 = { path = "../terp-core/crates/cw-minus/packages/cw2" }
+cw-orch = { path = "../terp-core/crates/cw-orchestrator/cw-orch" }
+cw-orch-core = { path = "../terp-core/crates/cw-orchestrator/packages/cw-orch-core" }
+cw-orch-daemon = { path = "../terp-core/crates/cw-orchestrator/cw-orch-daemon" }
+cw-orch-mock = { path = "../terp-core/crates/cw-orchestrator/packages/cw-orch-mock" }
+cw-orch-networks = { path = "../terp-core/crates/cw-orchestrator/packages/cw-orch-networks" }
+cw-orch-traits = { path = "../terp-core/crates/cw-orchestrator/packages/cw-orch-traits" }
+zakura-halo2-proofs = { path = "../terp-core/crates/zakura-common/crates/halo2_proofs" }
+zakura-halo2-gadgets = { path = "../terp-core/crates/zakura-common/crates/halo2_gadgets" }
+zakura-pasta-curves = { path = "../terp-core/crates/zakura-common/crates/pasta_curves" }
+
+zakura-halo2-poseidon = { path = "../terp-core/crates/zakura-common/crates/halo2_poseidon" }
+zakura-reddsa = { path = "../terp-core/crates/zakura-common/crates/reddsa" }
+zakura-sinsemilla = { path = "../terp-core/crates/zakura-common/crates/sinsemilla" }
+zakura-orchard = { path = "../terp-core/crates/zakura-common/crates/orchard" }
+cosmwasm-vm = { path = "../terp-core/crates/cosmwasm/packages/vm" }
+tendermint = { path = "../terp-core/crates/tendermint-rs/tendermint" }
+tendermint-proto = { path = "../terp-core/crates/tendermint-rs/proto" }
+tendermint-rpc = { path = "../terp-core/crates/tendermint-rs/rpc" }
+tendermint-config = { path = "../terp-core/crates/tendermint-rs/config" }
+tendermint-light-client = { path = "../terp-core/crates/tendermint-rs/light-client" }
+tendermint-light-client-detector = { path = "../terp-core/crates/tendermint-rs/light-client-detector" }
+tendermint-light-client-verifier = { path = "../terp-core/crates/tendermint-rs/light-client-verifier" }
+cosmrs = { path = "../terp-core/crates/cosmos-rust/cosmrs" }
+ibc-proto = { path = "../terp-core/crates/ibc-proto-rs" }
+cosmos-sdk-proto = { path = "../terp-core/crates/cosmos-rust/cosmos-sdk-proto" }
+abstract-cw-multi-test = { path = "../terp-core/crates/cw-multi-test-fork" }
+cw20-ics20 = { path = "../terp-core/crates/cw-plus/contracts/cw20-ics20" }
+zk-cosmwasm = { path = "../terp-core/crates/cosmwasm/packages/zk" }
