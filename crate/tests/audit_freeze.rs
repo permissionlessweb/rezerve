@@ -118,14 +118,23 @@ fn freeze_custody_earned_arbiter_in_process() {
 
     let key = tagged_hash(b"sess", &[b"audit"]);
     let winner = DerivedAccess::from_session("ask-audit", &key, &bid);
+    let session = private_inference_rent::access::SessionAccess::derive(
+        "ask-audit",
+        &key,
+        &bid,
+        &[6u8; 32],
+    );
     leases.accept_bid("lease-audit", winner.bearer_hex());
     leases
-        .access("lease-audit", &winner.bearer_hex())
+        .open_session("lease-audit", bid, session.bearer_hex())
+        .unwrap();
+    leases
+        .access("lease-audit", &session.bearer_hex())
         .unwrap();
     cell.close(EscrowParty::Tenant, &mut leases, "lease-audit", None)
         .unwrap();
     assert_eq!(
-        leases.access("lease-audit", &winner.bearer_hex()),
+        leases.access("lease-audit", &session.bearer_hex()),
         Err(private_inference_rent::LeaseAccessError::Closed)
     );
 

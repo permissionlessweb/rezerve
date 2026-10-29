@@ -45,13 +45,17 @@ fn provider_native_market_workflow_go() {
 
 #[test]
 fn rust_lease_book_same_rules_as_provider() {
+    use private_inference_rent::access::SessionAccess;
     use private_inference_rent::{DerivedAccess, LeaseAccessError, LeaseBook};
     let session = [1u8; 32];
     let bid = [2u8; 32];
     let winner = DerivedAccess::from_session("ask-1", &session, &bid);
-    let foreign = DerivedAccess::from_session("ask-other", &session, &bid);
+    let opened = SessionAccess::derive("ask-1", &session, &bid, &[3u8; 32]);
+    let foreign = SessionAccess::derive("ask-other", &session, &bid, &[3u8; 32]);
     let mut book = LeaseBook::new();
     book.accept_bid("lease-1", winner.bearer_hex());
+    book.open_session("lease-1", bid, opened.bearer_hex()).unwrap();
+    assert!(book.access("lease-1", &opened.bearer_hex()).is_ok());
     assert!(book.access("lease-1", &winner.bearer_hex()).is_ok());
     assert_eq!(
         book.access("lease-1", &foreign.bearer_hex()),
@@ -59,7 +63,7 @@ fn rust_lease_book_same_rules_as_provider() {
     );
     book.close("lease-1");
     assert_eq!(
-        book.access("lease-1", &winner.bearer_hex()),
+        book.access("lease-1", &opened.bearer_hex()),
         Err(LeaseAccessError::Closed)
     );
 }

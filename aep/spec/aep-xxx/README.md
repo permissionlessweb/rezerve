@@ -7,7 +7,7 @@ type: Standard
 created: 2026-09-09
 description: "Extend Akash market access: sealed bids, AKT-stake inclusion, collaborative FROST, and PIR retrieval of bids via untrusted proxies."
 category: Core
-updated: 2026-09-14
+updated: 2026-10-29
 ---
 
 <!-- Draft. An AEP editor assigns the number. -->
@@ -20,7 +20,7 @@ It specifies a **private bid path inside `provider-services`**. The order stays 
 
 Out-of-band bid and ask traffic MUST be fetchable by **private information retrieval (PIR)** so an untrusted **provider proxy** can serve the index without learning *which* bid or ask a renter or provider retrieved. That severs the association graph that a naive OOB channel would publish. The crate name `private-inference-rent` and env prefixes `PIR_*` are historical for the side-market gate. Cryptographic PIR is a **separate** dependency, designed after [Valar Group](https://github.com/valargroup) PIR (YPIR / SimplePIR as used in vote-nullifier and spendability retrieval).
 
-The public path remains the default when the private path is off. Status: Draft. The behavior described here runs in the accompanying crate and provider build.
+The public path remains the default when the private path is off. Status: Draft. A lab sequence on terpd 6.4.0 runs the market, a two-proxy bid fetch, an AKT stake gate with no live proof, and a stalled FROST close. It is not on the public Akash network. The bench and the honest limits are in [Implementation status](#implementation-status-2026-10-29).
 
 ## Thesis
 
@@ -118,6 +118,35 @@ FROST `n` and `t` are parameters. The first demo uses **t = 2, n = 3**.
 
 The demonstration checks that FROST signatures verify as the group key. Sidecar placement (Akash, isolated Wasmer, Penumbra-style validator sidecars) is how operators share the threshold.
 
+## Implementation status (2026-10-29)
+
+One production sequence exited 0 on the lab host against image `terp-core:local-arm64`. `terpd version` printed **6.4.0**. `registry.terp.network/terp-core:v6.5.0` was not in that registry (`not found`) and was not relabeled. An earlier bench used terpd 6.2.1. An August Halo2 artifact failed in the VM with `ZkError` invalid point encoding and was not reused. The sequence that passed used one fresh export.
+
+| Behavior | In that sequence |
+|---|---|
+| Public order, sealed bid, commitment `Match`, allocate, serve, lease bearer denied after close | Yes |
+| Two Ironwood spends. Earned is `f(open, close, rate)`. Closer cannot set earned. | Yes. Heights 102→103, rate 1, earned 1 zat. |
+| Bid / ask fetch | Two-proxy XOR. **Not YPIR.** One proxy’s answer is not the row. If the proxies collude, they recover the index. |
+| AKT minimum stake | Cleartext `statement_holds` for a stake at or above the minimum. `PROOF_LIVE` is false. `verify_akt_stake_inclusion` rejects a fake proof. No Halo2 stake proof. No Akash mainnet staking root. |
+| FROST stall | `finish_amounts` quotes earned 1 and remainder 99. One seat does not spend (`FrostCloseStalled`). Invented earned is `CloserSetEarned`. Provider paid 0 while stalled. |
+| ZIP-312 RedPallas | Not in Zakura. Spend authority is `frost-spend-v1+zip32-reconstructed-dkg-seed`. |
+| Proof system | `zakura-halo2-proofs` 5.0.0, feature `batch` only, `multicore` off. Pasta IPA, k=17. |
+
+Host times include the first keygen in the process. Chain gas is Comet `tx_search`. Signed fees are not in that response. The figure at `0.025uterp` per gas is `fee_at_min_price_uterp`.
+
+| Measure | terpd 6.4.0 | terpd 6.2.1 |
+|---|---:|---:|
+| Inclusion prove | 125.0 s | 152.2 s |
+| Inclusion verify | 1.4 s | 1.7 s |
+| Stored VK verify | 88.4 s | 107.8 s |
+| Accrual prove | 259.4 s | 318.2 s |
+| Accrual verify | 3.0 s | 3.5 s |
+| Transactions | 17 | 17 |
+| `gas_used` | 651,629,464 | 645,690,935 |
+| `store-full-circuit` gas | 638,984,649 | 638,984,649 |
+
+`store-full-circuit` is almost all of the gas. That transaction carries the Halo2 params and verifying key. The record is `artifacts/bench/e2e-latest.json`.
+
 ## Requirements
 
 ![Dependencies](../../assets/aep-xxx/dependencies.svg)
@@ -191,7 +220,7 @@ A sealed envelope still has to *move*. Direct OOB (email, HTTPS to the provider,
 
 The index MAY be served by an untrusted **provider proxy**. The proxy stores rows; it answers PIR queries. It MUST NOT learn the queried index. Design follows Valar Group PIR for retrieval (single-server YPIR / SimplePIR as in [vote-nullifier-pir](https://github.com/valargroup/vote-nullifier-pir) and [spendability-pir](https://github.com/valargroup/spendability-pir), crate [`valar-ypir`](https://crates.io/crates/valar-ypir)): database of fixed-size rows, client query hides the row, server returns an answer from which only the client recovers the envelope.
 
-This is **not implemented** in `private-inference-rent` today. Direct OOB ChaCha delivery is the crate’s current path. Cryptographic PIR + the proxy are **upcoming deliverables** (see funding). Env names `PIR_MODE` / `PIR_REQUIRE_COMMIT` remain the side-market **gate**; they are not this retrieval scheme.
+The lab sequence fetches a row with **two-proxy XOR**. That is information-theoretic PIR only if the proxies do not collude. It is not Valar YPIR or SimplePIR. Direct ChaCha delivery is still how the envelope is sealed. Cryptographic single-server PIR and the provider proxy remain the funded retrieval (see the [research grant](../../grant/re-zerve-research-grant.md)). Env names `PIR_MODE` / `PIR_REQUIRE_COMMIT` remain the side-market **gate**. They are not this retrieval scheme.
 
 Field table: [`BidAskPir`](data-structures.md#bidaskpir-proposed).
 
@@ -238,9 +267,9 @@ Changing `n` or `t` is a configuration change, not a new market. The crate expos
 
 ### AKT stake inclusion (proposed)
 
-Private market access SHOULD still **extend demand for AKT**. A bidder proves, in zero knowledge, `stake ≥ min_stake_uakt` against a staking-tree root (`AktStakeInclusion` in [`data-structures.md`](data-structures.md#aktstakeinclusion-proposed)). The bid does not publish the bonding account.
+Private market access SHOULD still **extend demand for AKT**. A bidder is supposed to prove, in zero knowledge, `stake ≥ min_stake_uakt` against a staking-tree root (`AktStakeInclusion` in [`data-structures.md`](data-structures.md#aktstakeinclusion-proposed)). The bid does not publish the bonding account.
 
-This proof is **not in the crate today**. It is a required direction of this AEP, not an optional slogan.
+The public-instance struct is in the crate (96 bytes: packed root, `min_stake_uakt`, amount class `AKT_STAKE_GE_MIN`). The Halo2 proof is **not live**. `verify_akt_stake_inclusion` fails closed. A cleartext `statement_holds` check is not that proof. The crate does not ship an Akash mainnet staking root.
 
 ### Ironwood close spends
 
@@ -460,7 +489,7 @@ Crate (Rust), available in the local lab:
 - `tests/frost_dkg.rs`, `tests/frost_seats.rs` — identifiers 1/2/3; `t=2`; one seat fails; deployer+provider sign.
 - `tests/zcash_escrow.rs`, `tests/escrow_close.rs` — Ironwood open; two close spends; ZIP-32 stand-in named; ZIP-312 not claimed.
 - `tests/accrual.rs` / product accrual path — `f(open_height, close_height, rate)`; closer cannot set earned.
-- `tests/e2e_local.rs` — local chain sequence for ask, commit, match, accept, bearer, close.
+- `tests/e2e_local.rs` — lab sequence: ask, commit, match, serve, two spends, lease bearer denied, two-proxy XOR fetch, AKT gate (`PROOF_LIVE` false), stalled `finish_amounts`.
 
 Provider fork (Go):
 
@@ -476,7 +505,7 @@ Required outcomes:
 
 ## Implementations
 
-The **`private-inference-rent`** crate (`crate/`) and the `provider-services` fork (`provider/`) implement the private path. Draft. The public Akash provider image does not include it.
+The **`private-inference-rent`** crate (`crate/`) and the `provider-services` fork (`provider/`) implement the private path. Draft. The public Akash provider image does not include it. The lab sequence that exited 0 is described under [Implementation status](#implementation-status-2026-10-29). Environment setup for that sequence is [`mise.toml`](../../../mise.toml). The funded remainder is the [research grant](../../grant/re-zerve-research-grant.md).
 
 | Surface | In this repo |
 |---|---|
@@ -509,6 +538,15 @@ Full table: [`crate-map.md`](crate-map.md).
 
 **Accrual.** Closer-supplied earned is forbidden. Heights come from the Zcash chain the deposit is on. Wall-clock is not block time.
 
+**FROST close stall.** If fewer than `t` seats will sign, the renter records a `CloseChallenge` (`record_frost_close_stall` in `crate/src/zcash_escrow.rs`). `close_notes` returns `FrostCloseStalled` and does not spend. The record is not a viewing key and not a `BankMsg`.
+
+| Field | Rule |
+|---|---|
+| Bind | Opened note commitment, DKG group, open height, recorded height, rate, signers `have`/`need` |
+| Height quote | `f(open_height, recorded_height, rate)`. The closer does not supply this integer. |
+| Provider paid | `0` while the challenge stands. An invented earned is `CloserSetEarned` and is not paid. The quote is also unpaid until a later threshold close. |
+| Later close | Two Ironwood spends. Earned stays `f` from Zcash heights. This record does not authorize a closer integer. |
+
 **Pay path.** Halo2 verify against a pinned VK. False proof or missing host fails closed. Crosslink MUST NOT be treated as ZAP1 pay inclusion.
 
 **Fail closed.** When PIR mode is required, missing match URL, missing envelope, or failed Open is a deny, not a public-path fallback. Public fallback exists only when PIR env is unset.
@@ -532,6 +570,33 @@ Full table: [`crate-map.md`](crate-map.md).
 - [valar-ypir](https://crates.io/crates/valar-ypir) / [vote-nullifier-pir](https://github.com/valargroup/vote-nullifier-pir) / [spendability-pir](https://github.com/valargroup/spendability-pir) — Valar Group PIR to mirror for bid/ask retrieval.
 - [zkAPI (EF × OA)](https://blog.ethereum.org/2026/10/01/introducing-zkapi) — unlink payment from API use. Gap note: [`oa-zkapi-gap.md`](oa-zkapi-gap.md). Local sources: `crates/zkapi` (not this repo).
 
+## Proof systems
+
+The soundness path is Halo2. The zk-cosmwasm VM on Terp already verifies two transparent provers beside it. Those hosts are registered in `terp-rs` (`StwoSsleCircuit`, `FlockLigeritoCircuit`). They prove other statements today. They are not a second payment circuit.
+
+| `prover_id` | System | Field | This market |
+|---|---|---|---|
+| 0 | Halo2 IPA, `zakura-halo2-proofs` 5.0.0, k=17 | Pasta / Vesta | HOSTING_PAYMENT and accrual. Lab sequence on terpd 6.4.0. |
+| 2 | Stwo (Circle STARK) | M31 (`curve_id` 5) | Verifier host exists. Not this statement. |
+| 3 | Flock Ligerito | `curve_id` 7 | Verifier host exists. Not this statement. |
+
+The next circuit is the **same four public instances** (merkle root, FROST group, amount class, `HOSTING_PAYMENT`) on `prover_id` 2. `prover_id` 3 is the comparison, measured with the same bench fields (prove, verify, `gas_used`, params bytes). Halo2 stays until that proof verifies in the VM. The SSLE and Flock demos do not replace this payment proof.
+
+Stwo and Ligerito are the candidates because the Halo2 path spends its time and gas on the universal params and the verifying key. On the 6.4.0 bench, `store-full-circuit` is 638,984,649 of 651,629,464 gas, and stored-VK verify is 88 seconds. A transparent STARK does not ship that params file. Setup matches the rest of this draft: no dealer, no trusted SRS.
+
+### Akash Proposal 346
+
+[Proposal 346](https://akash.network/) (“Migrate the Akash Protocol to Solana”) opened on 26 October 2026 and closes on 2 November 2026. Published tallies during the vote were about 98% yes, with turnout above the 33.4% quorum. A yes authorizes AKT as a 1:1 SPL token and a one-way portal after audits. It does not move the marketplace. A later cutover vote does that. Current leases stay on akashnet-2 until then.
+
+That vote changes where AKT lives. It does not change where this market verifies proofs.
+
+| Piece | After a Solana cutover |
+|---|---|
+| Provider binary | Still `provider-services`. The public order may be a Solana program instead of `MsgCreateBid`. |
+| Pay | Still Ironwood notes on Zakura. CosmWasm on Terp records the grant. Solana does not hold the notes. |
+| AKT inclusion | The statement stays `stake ≥ min`. The root must be able to come from a Solana stake account or the SPL supply, not only a Cosmos staking tree. The lab gate binds neither root today. |
+| Verifier | Still the Terp zk-cosmwasm VM (`prover_id` 0 now, `prover_id` 2 when the STARK statement verifies). |
+
 ## Open questions, committee, and funding
 
 This subsection is for the Akash community. The three biases in **Thesis** are the ones to keep or reject.
@@ -550,7 +615,7 @@ This subsection is for the Akash community. The three biases in **Thesis** are t
 
 | Area | Why it is on the grant, not a slogan |
 |---|---|
-| Circuit / proof optimizations | Halo2 k=17 prove is long. Smaller vk, faster `proof_instance_verify`, AKT-inclusion circuit when it exists. |
+| Circuit / proof optimizations | Halo2 k=17 is the soundness path. On terpd 6.4.0, stored-VK verify is 88 s and `store-full-circuit` is 639M gas. Next statement is the same public instances on Stwo, compared with Flock Ligerito. See [Proof systems](#proof-systems). |
 | Light-client interop | `cw-zap1-ibcv2` is attestation, not a selected ICS-08 client. Extend LC interop so pay inclusion is a real client, not a lab module. |
 | Contracts on a non-Terp CosmWasm | Curate `cw-pir-commit` / `cw-pir-escrow` / `cw-zap1-ibcv2` against stock CosmWasm so the market is not a Terp-only fork. |
 | Benchmarks, tests, front end | Allocate/match/close latency; e2e that includes AKT inclusion; a deployer/provider UI that does not dump AEAD. |
@@ -562,7 +627,7 @@ This subsection is for the Akash community. The three biases in **Thesis** are t
 | Stage | Intent |
 |---|---|
 | First demo | Terp additional market + custom provider + 2-of-3 collaborative sidecars (Akash, Wasmer, Penumbra-style). FROST verify. |
-| AKT inclusion | Specify and prove `AktStakeInclusion`. Sealed bid requires min AKT stake. |
+| AKT inclusion | Public instances only. Halo2 proof not live; verify fails closed. Not an Akash mainnet root. |
 | Parameterize FROST | Operators set `n` and `t`. |
 | CosmWasm portability | Same contracts on a non-Terp CosmWasm. |
 | LC interop | Selected IBC client, not only attestation. |
@@ -581,19 +646,7 @@ This subsection is for the Akash community. The three biases in **Thesis** are t
 
 ### Request for research funding
 
-Experiment: extend Akash market access, keep AKT demand via stake inclusion, use FROST as cross-chain collaboration including Penumbra-style sidecars, and retrieve sealed bids by **private information retrieval** through an untrusted provider proxy.
-
-Funding would support:
-
-- First demo (custom provider, Terp market, collaborative sidecars, FROST verify).
-- Spec + circuit for **AKT minimum-stake inclusion**.
-- **Cryptographic PIR** for bid/ask retrieval, leveraging Valar Group PIR (YPIR / SimplePIR as in vote-nullifier and spendability).
-- Curation of a **provider proxy** that can host that index without learning which row a renter or provider fetched.
-- Circuit / proof optimizations (prove time, vk size, host verify).
-- Light-client interop beyond the attestation module.
-- Porting contracts to a **non-Terp CosmWasm**.
-- Benchmarks, tests, and a minimal front end.
-- Independent review of the sealed-bid gate, bearer, sidecar isolation, and PIR query privacy.
+The lab sequence is the baseline. The grant asks for what that sequence does not yet do: single-server PIR, a live AKT stake proof that can take a Solana stake root, and the same payment statement on Stwo. Full text: [research grant](../../grant/re-zerve-research-grant.md).
 
 Scoped to that work and this AEP. Not a claim that public Akash already runs this path.
 

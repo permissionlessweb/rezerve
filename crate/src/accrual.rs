@@ -2,8 +2,12 @@
 //!
 //! `earned = f(open_height, close_height, rate) = (close - open) * rate`.
 //! The public surface is a BLAKE2b commitment plus Halo2 instances (header
-//! hashes). Duration, earned, rate, and heights stay off the public JSON.
-//! Header `time` is unused. HOSTING_PAYMENT inclusion is not `f`.
+//! hashes). Duration, earned, rate, heights, the Ironwood note id, and any
+//! renter id stay off the public JSON and off the Halo2 instances.
+//! The note id is a witness inside that commitment (zkAPI-style note binding
+//! on Pasta Halo2, not a second curve). Header `time` is unused.
+//! HOSTING_PAYMENT inclusion is not `f`. `PIR_*` is the allocate gate, not
+//! this binding.
 
 use crate::zakura::{ZakuraError, ZakuraRegtest};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
@@ -30,7 +34,9 @@ pub struct ChainHeader {
     pub hash: [u8; 32],
 }
 
-/// Private witness: earned and duration never leave this type onto the chain.
+/// Private witness: earned, duration, and the note id never leave this type
+/// onto the chain. `note_id` is the opened Ironwood nullifier (32 bytes), not
+/// a renter id. All zeros means the commitment is not bound to a note.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccrualWitness {
     pub window: HeightWindow,
@@ -38,12 +44,15 @@ pub struct AccrualWitness {
     pub earned_zat: u64,
     pub duration_heights: u64,
     pub blinding: [u8; 32],
+    pub note_id: [u8; 32],
 }
 
-/// On-chain / circuit public inputs. No plaintext hours, earned, rate, or heights.
+/// On-chain / circuit public inputs. No plaintext hours, earned, rate,
+/// heights, note id, renter id, or account.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccrualPublic {
-    /// BLAKE2b-256 (`pir-accrual-v1`) of window, rate, blinding, and headers.
+    /// BLAKE2b-256 (`pir-accrual-v1`) of window, rate, blinding, headers, and
+    /// the Ironwood note id. The note id is not itself a public field.
     pub commitment: [u8; 32],
     /// `getblockheader` hash at open height.
     pub open_header_hash: [u8; 32],
@@ -145,6 +154,8 @@ pub enum AccrualError {
     HeaderCollision,
     #[error("earned commitment does not bind witness")]
     UnboundCommitment,
+    #[error("Ironwood note id must be nonzero to bind accrual")]
+    UnboundNote,
     #[error("empty Halo2 proof is never valid")]
     EmptyHalo2Proof,
     #[error("HOSTING_PAYMENT inclusion does not prove height_window * rate")]
@@ -222,22 +233,35 @@ fn bind_commitment(
     close_header_hash: &[u8; 32],
 ) -> [u8; 32] {
     // Same preimage the AccrualCircuit hashes with WordChip BLAKE2b-256.
-    hosting_payment::accrual_commit_bytes(
-        witness.window.open_height,
-        witness.window.close_height,
-        witness.rate.zat_per_height,
-        &witness.blinding,
-        open_header_hash,
-        close_header_hash,
-    )
+    if witness.note_id == [0u8; 32] {
+        hosting_payment::accrual_commit_bytes(
+            witness.window.open_height,
+            witness.window.close_height,
+            witness.rate.zat_per_height,
+            &witness.blinding,
+            open_header_hash,
+            close_header_hash,
+        )
+    } else {
+        hosting_payment::accrual_commit_note_bytes(
+            witness.window.open_height,
+            witness.window.close_height,
+            witness.rate.zat_per_height,
+            &witness.blinding,
+            open_header_hash,
+            close_header_hash,
+            &witness.note_id,
+        )
+    }
 }
 
-pub fn commit_accrual(
+fn commit_inner(
     window: HeightWindow,
     rate: AccrualRate,
     blinding: [u8; 32],
     open_header_hash: [u8; 32],
     close_header_hash: [u8; 32],
+    note_id: [u8; 32],
 ) -> Result<(AccrualWitness, AccrualPublic), AccrualError> {
     if open_header_hash == close_header_hash {
         return Err(AccrualError::HeaderCollision);
@@ -253,6 +277,7 @@ pub fn commit_accrual(
         earned_zat: earned,
         duration_heights: duration,
         blinding,
+        note_id,
     };
     let commitment = bind_commitment(&witness, &open_header_hash, &close_header_hash);
     Ok((
@@ -263,6 +288,47 @@ pub fn commit_accrual(
             close_header_hash,
         },
     ))
+}
+
+pub fn commit_accrual(
+    window: HeightWindow,
+    rate: AccrualRate,
+    blinding: [u8; 32],
+    open_header_hash: [u8; 32],
+    close_header_hash: [u8; 32],
+) -> Result<(AccrualWitness, AccrualPublic), AccrualError> {
+    commit_inner(
+        window,
+        rate,
+        blinding,
+        open_header_hash,
+        close_header_hash,
+        [0u8; 32],
+    )
+}
+
+/// Bind `f` to a nonzero Ironwood note id. The id is the opened-note
+/// nullifier. It is hashed into the commitment and is not a public instance.
+/// The closer does not pass `earned`; `f` does.
+pub fn commit_accrual_note(
+    window: HeightWindow,
+    rate: AccrualRate,
+    blinding: [u8; 32],
+    open_header_hash: [u8; 32],
+    close_header_hash: [u8; 32],
+    note_id: [u8; 32],
+) -> Result<(AccrualWitness, AccrualPublic), AccrualError> {
+    if note_id == [0u8; 32] {
+        return Err(AccrualError::UnboundNote);
+    }
+    commit_inner(
+        window,
+        rate,
+        blinding,
+        open_header_hash,
+        close_header_hash,
+        note_id,
+    )
 }
 
 pub fn verify_witness(witness: &AccrualWitness, public: &AccrualPublic) -> Result<(), AccrualError> {
@@ -353,7 +419,7 @@ pub fn prove_accrual_halo2(
     public: &AccrualPublic,
 ) -> Result<Vec<u8>, AccrualError> {
     verify_witness(witness, public)?;
-    let proof = hosting_payment::prove_accrual(
+    let proof = hosting_payment::prove_accrual_note(
         witness.window.open_height,
         witness.window.close_height,
         witness.rate.zat_per_height,
@@ -361,6 +427,7 @@ pub fn prove_accrual_halo2(
         &witness.blinding,
         &public.open_header_hash,
         &public.close_header_hash,
+        &witness.note_id,
     )
     .map_err(AccrualError::Halo2)?;
     if proof.is_empty() {
@@ -378,6 +445,29 @@ pub fn verify_product_accrual(
 ) -> Result<(), AccrualError> {
     verify_witness(witness, public)?;
     verify_accrual_halo2(proof, public)
+}
+
+/// Commit `f` bound to `note_id`, prove Halo2, verify. Empty proof is never
+/// returned. Public instances do not carry the note id or a renter id.
+pub fn commit_and_prove_accrual_note(
+    window: HeightWindow,
+    rate: AccrualRate,
+    blinding: [u8; 32],
+    open_header_hash: [u8; 32],
+    close_header_hash: [u8; 32],
+    note_id: [u8; 32],
+) -> Result<(AccrualWitness, AccrualPublic, Vec<u8>), AccrualError> {
+    let (witness, public) = commit_accrual_note(
+        window,
+        rate,
+        blinding,
+        open_header_hash,
+        close_header_hash,
+        note_id,
+    )?;
+    let proof = prove_accrual_halo2(&witness, &public)?;
+    verify_product_accrual(&witness, &public, &proof)?;
+    Ok((witness, public, proof))
 }
 
 /// Commit `f`, prove Halo2, verify. Empty proof is never returned.
@@ -673,4 +763,98 @@ pub fn open_at_tip(z: &ZakuraRegtest) -> Result<u64, AccrualError> {
     let tip = getblockcount(z)?;
     let hdr = header_at(z, tip)?;
     Ok(hdr.height)
+}
+
+#[cfg(test)]
+mod note_bound_tests {
+    use super::*;
+
+    #[test]
+    fn note_bound_accrual_hides_note_and_rejects_closer_earned() {
+        let window = HeightWindow {
+            open_height: 10,
+            close_height: 15,
+        };
+        let rate = AccrualRate {
+            zat_per_height: 100,
+        };
+        let blinding = [9u8; 32];
+        let mut open_h = [0x11u8; 32];
+        open_h[31] = 0x0a;
+        let mut close_h = [0x22u8; 32];
+        close_h[31] = 0x0b;
+        let mut note_a = [0xabu8; 32];
+        note_a[0] = 1;
+        let mut note_b = [0xcdu8; 32];
+        note_b[0] = 2;
+        assert_ne!(note_a, note_b);
+
+        assert_eq!(
+            commit_accrual_note(window, rate, blinding, open_h, close_h, [0u8; 32]),
+            Err(AccrualError::UnboundNote)
+        );
+
+        let (wit, public, proof) = commit_and_prove_accrual_note(
+            window, rate, blinding, open_h, close_h, note_a,
+        )
+        .expect("note-bound Halo2 of f()");
+        assert_eq!(wit.note_id, note_a);
+        assert_eq!(wit.earned_zat, 500);
+        assert_eq!(f(10, 15, rate).unwrap(), wit.earned_zat);
+        assert!(!proof.is_empty());
+        verify_product_accrual(&wit, &public, &proof).unwrap();
+
+        let surface = public.chain_surface();
+        let obj = surface.as_object().expect("object");
+        assert_eq!(obj.len(), 3);
+        assert!(obj.get("note_id").is_none());
+        assert!(obj.get("renter_id").is_none());
+        assert!(obj.get("account").is_none());
+        let inst = public.zk_instance_bytes();
+        assert_eq!(inst.len(), 96);
+        assert!(!inst.chunks(32).any(|c| c == note_a || c == note_b));
+        let mut packed_note = note_a;
+        packed_note[31] &= 0x3f;
+        assert!(!inst.chunks(32).any(|c| c == packed_note));
+
+        let grant = product_grant_json(&public);
+        assert_eq!(grant.get("earned_zat").and_then(|v| v.as_u64()), Some(0));
+        assert!(grant.get("note_id").is_none());
+        assert!(grant.get("renter_id").is_none());
+        assert!(grant.get("account").is_none());
+
+        let (wit_b, pub_b) =
+            commit_accrual_note(window, rate, blinding, open_h, close_h, note_b).unwrap();
+        assert_ne!(pub_b.commitment, public.commitment);
+        assert_eq!(wit_b.earned_zat, wit.earned_zat);
+        assert!(
+            !hosting_payment::verify_accrual(&proof, &pub_b.zk_instance_bytes()).unwrap(),
+            "proof for note A must not verify under note B"
+        );
+
+        let mut swapped = wit.clone();
+        swapped.note_id = note_b;
+        assert_eq!(
+            verify_witness(&swapped, &public),
+            Err(AccrualError::UnboundCommitment)
+        );
+
+        let mut closer = wit.clone();
+        closer.earned_zat = 1;
+        assert_eq!(
+            verify_witness(&closer, &public),
+            Err(AccrualError::UnboundCommitment)
+        );
+        assert_eq!(
+            prove_accrual_halo2(&closer, &public),
+            Err(AccrualError::UnboundCommitment)
+        );
+
+        let renter = [0xeeu8; 32];
+        let hp = hosting_payment::encode_instances("note-bound", "sib", &[0x44u8; 32], 7);
+        assert_eq!(hp.len(), 128);
+        assert_eq!(hosting_payment::INSTANCE_COUNT, 4);
+        assert!(!hp.chunks(32).any(|c| c == renter || c == note_a));
+        assert_eq!(hosting_payment::ACCRUAL_INSTANCE_COUNT, 3);
+    }
 }

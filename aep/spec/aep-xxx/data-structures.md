@@ -73,19 +73,25 @@ On-chain record. No price, identity, endpoint, or envelope.
 
 ## `DerivedAccess`
 
-Private-path lease credential. Not the public ES256K JWT.
+Private-path lease credential. Not the public ES256K JWT. The lease-long bearer is stable for the note and re-links sessions. Session auth is a separate bearer from the same out-of-band key plus a session nonce. `PIR_*` env names are the allocate gate, not this derivation.
 
 ```
-secret     = tagged_hash("pir-access-v1", oob_aead_key, bid_commitment, ask_id)
-bearer_hex = hex(tagged_hash("pir-access-bearer-v1", secret))
+secret         = tagged_hash("pir-access-v1", oob_aead_key, bid_commitment, ask_id)
+bearer_hex     = hex(tagged_hash("pir-access-bearer-v1", secret))
+session_secret = tagged_hash("pir-access-session-v1",
+                   oob_aead_key, bid_commitment, ask_id, session_nonce)
+session_bearer = hex(tagged_hash("pir-access-session-bearer-v1", session_secret))
 ```
 
 | Field | Type | Use |
 |---|---|---|
-| `bearer_hex` | 64-char hex | `Authorization: Bearer` |
+| `note` (`bid_commitment`) | 32 bytes | payment-note binding; unchanged when the session nonce rotates |
+| `session_nonce` | 32 bytes | fresh per session; not a renter id |
+| `session_bearer` | 64-char hex | `Authorization: Bearer` for this session only |
+| `bearer_hex` | 64-char hex | lease binding; not a session credential |
 | `lease_id` | string | lease book |
 
-Winner opens. Foreign bearer denied. After `pir stop` / close, winner denied.
+Winner session opens. A second session bearer differs. A foreign bearer is denied. After rotate or `pir stop` / close, the previous session bearer is denied. The note stays the same.
 
 ## `BidAskPir` (proposed)
 
@@ -138,24 +144,62 @@ Product money is Ironwood notes (NU6.3, V3 plaintext, v6 tx). CosmWasm records a
 | Open | Shield into a note whose spend authority is the FROST group |
 | Spend 1 | Consume opened note: earned → provider; remainder → group |
 | Spend 2 | Consume remainder → deployer |
-| Earned | `f(open_height, close_height, rate) = (close − open) × rate` from Zcash heights |
+| Earned | `f(open_height, close_height, rate) = (close − open) × rate` from Zcash heights. The closer cannot set earned. |
+| Note binding | Halo2 accrual (`pir-accrual.f.v1`, Pasta) binds that `f` to the opened Ironwood note id (32-byte nullifier) inside the BLAKE2b witness, the way zkAPI binds balance to `note_id`. The note id is not a public instance. A different note does not open the same commitment. |
+| Public instances | Accrual, 96 bytes: packed commitment, open header hash, close header hash. `HOSTING_PAYMENT`, 128 bytes: merkle root, FROST group, amount class, kind. Neither list carries a renter id or an account. |
 | Grant | `frost-spend-v1` over the opened Ironwood nullifier |
 | SK | ZIP-32 (coin type 133) of the reconstructed DKG group seed |
 
-ZIP-312 RedPallas is not in Zakura. Do not claim it.
+`PIR_*` on the provider is the allocate gate. It is not this note binding and not cryptographic private information retrieval.
+
+ZIP-312 RedPallas is not in Zakura. Do not claim it. Stay on Ironwood notes and Halo2 on Pasta. Do not port an ETH vault, Groth16, or BN254.
 
 ## `AktStakeInclusion` (proposed)
 
-ZK inclusion proof that a **market bidder** holds at least `min_stake_uakt` bonded or delegated AKT. Purpose: **buy-and-hold pressure on AKT** as a condition of private-market access, without publishing the bidder’s full staking identity on the bid.
+ZK inclusion statement that a **market bidder** holds at least `min_stake_uakt` bonded or delegated AKT. Purpose: **buy-and-hold pressure on AKT** as a condition of private-market access, without publishing the bidder's bonding account or a renter id.
 
-| Field | Type | Notes |
+**Status:** the public-instance struct is in `crate/src/akt_stake.rs`. The Halo2 proof is **not live**. `verify_akt_stake_inclusion` fails closed (`ProofNotLive`) for empty and nonempty bytes. `statement_holds` is a cleartext check that `stake_uakt ≥ min_stake_uakt` and that the bonding account is absent from the instance bytes. That check is not a proof. The crate does not query Akash, does not ship a mainnet staking snapshot, and does not claim mainnet AKT.
+
+### Public instances
+
+96 bytes, three little-endian Pallas elements (same 254-bit pack as other Pasta instances in this crate). Not the 128-byte `HOSTING_PAYMENT` list. No bonding account. No renter id. No exact stake.
+
+| Row | Field | Type | Constraint |
+|---|---|---|---|
+| 0 | `inclusion_root` | 32 bytes | Market-chosen staking or vesting tree root, packed. Not an account. Not fetched from Akash mainnet. |
+| 1 | `min_stake_uakt` | u64 | Nonzero threshold, little-endian in the field. Public. |
+| 2 | `amount_class` | 32 bytes | Domain `AKT_STAKE_GE_MIN`. Circuit kind. Not the bidder's balance and not a balance bucket. |
+
+### Witness (not an instance)
+
+| Field | Type | Constraint |
 |---|---|---|
-| `min_stake_uakt` | u64 | threshold set by the market |
-| `inclusion_root` | 32 bytes | staking / vesting tree root at a proven height |
-| `proof` | Halo2 (or later) | bidder is in that tree with `stake ≥ min` |
-| `public_instances` | list | root, min, amount class — not the account |
+| `bonding_account` | bytes | Nonempty. Must not occur in the 96 instance bytes. |
+| `stake_uakt` | u64 | Private. Relation is `stake_uakt ≥ min_stake_uakt`. |
 
-This object is **not** implemented in the crate today. It is a stated bias of this AEP: private bids should still **extend demand for AKT**.
+### Intended Halo2 relation (not live)
+
+Pasta PLONK, same curve family as accrual and `HOSTING_PAYMENT`. Not Groth16. Not BN254. No verifying key is shipped.
+
+| Step | Constraint |
+|---|---|
+| Leaf | BLAKE2b-256, personal `akt-stake-v0`, over `bonding_account` and `stake_uakt` (u64 LE) |
+| Inclusion | Merkle opening of that leaf to `inclusion_root` (personal `akt-stake-mrk` on nodes) |
+| Range | `stake_uakt ≥ min_stake_uakt` |
+| Public | The three rows above only |
+
+The crate does not evaluate this relation. A full circuit is larger than this pass (accrual and `HOSTING_PAYMENT` already sit at k=17 / k=18). Until a real `verify_proof` exists, callers must treat every proof as rejected.
+
+| API | Behavior |
+|---|---|
+| `AktStakePublic::new` | Builds the three public rows. Rejects `min_stake_uakt = 0`. Takes no account and no renter id. |
+| `statement_holds` | Cleartext relation and account-absence check. Not a proof. |
+| `prove_akt_stake_inclusion` | If the statement fails, returns that error. If it holds, returns `ProofNotLive` and no bytes. |
+| `verify_akt_stake_inclusion` | Always `ProofNotLive`. |
+
+`PIR_*` on the provider is the allocate gate. It is not this inclusion check and not cryptographic private information retrieval.
+
+Ironwood notes stay the payment asset. This object does not add an ETH vault or a second curve.
 
 ## `PirGate`
 

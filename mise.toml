@@ -1,0 +1,32 @@
+# Toolchain for the re-zerve lab sequence.
+# `mise run setup` checks the tools. `mise run check -- cw-pir-escrow` typechecks one package.
+# `mise run demo` is the production sequence. It belongs on the lab host.
+
+[tools]
+rust = "1.88.0"
+go = "1.26.2"
+python = "3.12"
+
+[env]
+TERP_IMAGE_REPO = "registry.terp.network/terp-core"
+# Intended tag. Not in the registry on 2026-10-29. Do not point PIR_TERP_IMAGE at it
+# unless `docker image inspect` succeeds. The sequence that exited 0 used the line below.
+TERP_IMAGE_VERSION = "v6.5.0"
+PIR_TERP_IMAGE = "terp-core:local-arm64"
+PIR_BENCH_IMAGE_LABEL = "terpd 6.4.0"
+
+[tasks.setup]
+description = "Install the Rust wasm target and require go, python3, docker, and wasm-opt"
+run = "sh scripts/demo-env.sh setup"
+
+[tasks.check]
+description = "Typecheck the workspace, or one package: mise run check -- cw-pir-commit"
+run = "sh scripts/demo-env.sh check"
+
+[tasks.test-contracts]
+description = "Contract and interface tests. No chain image."
+run = "sh scripts/demo-env.sh test-contracts"
+
+[tasks.demo]
+description = "Production sequence on PIR_TERP_IMAGE. Refuses a missing v6.5.0 tag."
+run = "sh scripts/demo-env.sh demo"

@@ -41,6 +41,8 @@ pub struct LiveDaemonHint {
     pub ics08_tamper_rejected: bool,
     /// LCD of the still-running ict chain when `PIR_KEEP_CHAIN=1`.
     pub rest_url: String,
+    /// Comet RPC of that chain. Gas totals come from `tx_search`.
+    pub rpc_url: String,
     /// `cw-pir-commit` address posted during attach (live Match, not RAM store).
     pub commit_contract: String,
     pub zap1_halo2_accepted: bool,
@@ -219,6 +221,11 @@ pub fn run_live_attach_with_commits(ask_hex: &str, bid_hex: &str) -> Result<Live
             ics08_tamper_rejected: true,
             rest_url: v
                 .get("rest_url")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            rpc_url: v
+                .get("rpc_url")
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string(),

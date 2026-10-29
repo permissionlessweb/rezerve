@@ -40,9 +40,18 @@ fn accrue_partial_then_leasebook_close_after_grant_denies_bearer() {
 
     let key = tagged_hash(b"sess", &[b"honor"]);
     let winner = DerivedAccess::from_session("ask-honor", &key, &bid);
-    let bearer = winner.bearer_hex();
+    let session = private_inference_rent::access::SessionAccess::derive(
+        "ask-honor",
+        &key,
+        &bid,
+        &[8u8; 32],
+    );
+    let bearer = session.bearer_hex();
     let mut leases = LeaseBook::new();
-    leases.accept_bid("lease-honor", bearer.clone());
+    leases.accept_bid("lease-honor", winner.bearer_hex());
+    leases
+        .open_session("lease-honor", bid, bearer.clone())
+        .unwrap();
     leases.access("lease-honor", &bearer).unwrap();
 
     let grant = cell
